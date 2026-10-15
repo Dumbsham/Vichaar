@@ -8,7 +8,7 @@ A Substack-style publishing platform where the product is small and the engineer
 reliable email fan-out, a cache-first read path, and an event pipeline that never writes
 a click to the primary database.
 
-[![CI](https://github.com/Dumbsham/inkwell/actions/workflows/ci.yml/badge.svg)](https://github.com/Dumbsham/Vichaar/actions)
+[![CI](https://github.com/Dumbsham/inkwell/actions/workflows/blank.yml/badge.svg)](https://github.com/Dumbsham/Vichaar/actions)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
