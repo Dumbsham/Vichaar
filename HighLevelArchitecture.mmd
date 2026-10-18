@@ -1,0 +1,82 @@
+flowchart LR
+    Reader(["Reader"])
+    Writer(["Writer"])
+
+    subgraph Edge["Edge"]
+        CF["Cloudflare<br/>CDN, DNS, TLS"]
+        Caddy["Caddy<br/>reverse proxy"]
+    end
+
+    subgraph App["Application tier (modular monolith)"]
+        Web["Next.js web"]
+        API["Express API<br/>auth, publications, posts,<br/>subscriptions, billing,<br/>delivery, analytics"]
+        Track["Tracking endpoint<br/>open pixel, click redirect"]
+    end
+
+    subgraph Queues["Queues (SQS API)"]
+        EventsQ[["Domain events"]]
+        SendQ[["Send jobs"]]
+        HookQ[["Webhook events"]]
+        TrackQ[["Tracking events"]]
+        DLQ[["Dead-letter queues"]]
+    end
+
+    subgraph Workers["Worker processes"]
+        Relay["Outbox relay"]
+        Fanout["Fan-out worker"]
+        Sched["Slot scheduler"]
+        Sender["Sender worker"]
+        Hooks["Webhook processor"]
+        Recon["Billing reconciliation"]
+        Consumer["Analytics batch consumer"]
+    end
+
+    subgraph Data["Data stores"]
+        PG[("PostgreSQL<br/>primary")]
+        Replica[("Read replica")]
+        Redis[("Redis<br/>cache, rate limits")]
+        CH[("ClickHouse<br/>events")]
+        Obj[("Object storage<br/>images, quote cards")]
+    end
+
+    subgraph External["External services"]
+        Email["Email provider<br/>SES / SMTP / stub"]
+        Rzp["Razorpay"]
+    end
+
+    Reader --> CF
+    Writer --> CF
+    CF --> Caddy
+    Caddy --> Web
+    Caddy --> API
+    Caddy --> Track
+    Web --> API
+
+    API --> PG
+    API --> Replica
+    API --> Redis
+    API --> Obj
+    API --> CH
+
+    PG -->|"outbox rows"| Relay
+    Relay --> EventsQ
+    EventsQ --> Fanout
+    Fanout --> Sched
+    Sched --> SendQ
+    SendQ --> Sender
+    Sender --> Email
+    Sender -->|"idempotency keys, delivery log"| PG
+    SendQ -.->|"after retries"| DLQ
+
+    Email -->|"bounces, complaints"| API
+    Rzp -->|"payment events"| API
+    API -->|"verified, then enqueue"| HookQ
+    HookQ --> Hooks
+    Hooks --> PG
+    Hooks -->|"invalidate entitlements"| Redis
+    Recon --> Rzp
+    Recon --> PG
+
+    Track -->|"respond first, enqueue"| TrackQ
+    TrackQ --> Consumer
+    Consumer -->|"batched inserts"| CH
