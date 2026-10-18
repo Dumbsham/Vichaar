@@ -8,7 +8,12 @@ A Substack-style publishing platform where the product is small and the engineer
 reliable email fan-out, a cache-first read path, and an event pipeline that never writes
 a click to the primary database.
 
+<<<<<<< HEAD
 [![CI](https://github.com/Dumbsham/Vichaar/actions/workflows/blank.yml/badge.svg)](https://github.com/Dumbsham/Vichaar/actions/workflows/blank.yml)![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
+=======
+[![CI](https://github.com/Dumbsham/inkwell/actions/workflows/ci.yml/badge.svg)](https://github.com/Dumbsham/inkwell/actions)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
+>>>>>>> 15f36ff (First Commit)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 [Live demo](#) · [System design doc](docs/design.md) · [Decision records](docs/adr) · [Benchmarks](docs/benchmarks.md)
@@ -210,4 +215,8 @@ Read [AGENTS.md](AGENTS.md) for conventions. `pnpm lint` and `pnpm test` must pa
 
 ## License
 
+<<<<<<< HEAD
 MIT. See [LICENSE](LICENSE).
+=======
+MIT. See [LICENSE](LICENSE).
+>>>>>>> 15f36ff (First Commit)
