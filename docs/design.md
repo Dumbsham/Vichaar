@@ -427,7 +427,7 @@ erDiagram
 - **auth_tokens:** `id`, `user_id`, `purpose` (verify email, reset password), `token_hash`, `expires_at`, `used_at`.
 
 ### Notes
-- **Partitioning:** `post_deliveries` is partitioned monthly by `send_month`, which is derived from the post's publish time and therefore identical for every row of a post. Postgres requires the partition key inside a unique key, so this keeps the primary key a true per-email idempotency key. About 90 days stay hot.
+- **Partitioning:** `post_deliveries` is partitioned monthly by `send_month`, which is derived from the post's publish time and therefore identical for every row of a post. Postgres requires the partition key inside a unique key, so this keeps the primary key a true per-email idempotency key. About 90 days stay hot. A partition maintenance utility pre-creates the next 3 months, provisions a `DEFAULT` partition (`post_deliveries_default`) as a safety net, and runs a startup check/alert so a missing partition can never cause fan-out batch inserts to fail.
 - **Why `post_contents` is separate:** list queries never load large bodies, and the paid body is isolated so it cannot leak through a "select everything" query.
 - **Why `subscriptions` is separate from `users`:** a free reader needs only an email. An account links later through `user_id`.
 - **Counters:** `subscriber_count` is updated in the same transaction as the status change, so there is no `COUNT(*)` on large tables.
@@ -437,7 +437,7 @@ erDiagram
 
 ## API design
 
-**Ground rules.** Base path `/api/v1`. JSON, camelCase, UUID ids, UTC timestamps, money in paise. Session cookie (`HttpOnly`, `Secure`, `SameSite`) plus an `Origin` check on state-changing requests. Writer routes carry the publication in the path (`/publications/:pubId/...`), public routes carry the subdomain (`/public/:subdomain/...`) so the CDN can cache by URL. Another tenant's resource returns 404, not 403. Public previews are cacheable (`ETag` from `version`), the paid body and account data are `no-store`.
+**Ground rules.** Base path `/api/v1`. JSON, camelCase, application-generated UUIDv7 IDs (time-ordered, index-friendly B-tree clustering), UTC timestamps, money in paise. Session cookie (`HttpOnly`, `Secure`, `SameSite`) plus an `Origin` check on state-changing requests. Sessions stored in PostgreSQL `sessions` table with argon2 password hashing. Writer routes carry the publication in the path (`/publications/:pubId/...`), public routes carry the subdomain (`/public/:subdomain/...`) so the CDN can cache by URL. Another tenant's resource returns 404, not 403. Public previews are cacheable (`ETag` from `version`), the paid body and account data are `no-store`.
 
 **Auth and account:** `POST /auth/signup`, `/auth/login`, `/auth/logout`, `GET /auth/google` and callback, `POST /auth/verify-email`, `/auth/password/forgot`, `/auth/password/reset`, `GET` and `PATCH /me`.
 
@@ -450,7 +450,7 @@ erDiagram
 | `POST /publications/:pubId/posts` | Create draft |
 | `GET /publications/:pubId/posts?status=&cursor=` | List posts |
 | `GET`, `PATCH`, `DELETE .../posts/:postId` | Read, autosave (requires current `version`, else 409), delete draft |
-| `POST .../posts/:postId/publish` | Publish or schedule, returns 202 |
+| `POST .../posts/:postId/publish` | Publish or schedule, accepts `{ sendImmediately?: boolean }` (bypasses slots when true, sets `send_at = now()`), returns 202 |
 | `POST .../posts/:postId/unpublish` | Take down, invalidate cache |
 | `POST /publications/:pubId/images` | Get an upload URL |
 | `GET /publications/:pubId/subscribers?cursor=` | Subscriber list |
@@ -472,7 +472,7 @@ erDiagram
 
 **Reader, account and billing:** `GET /me/subscriptions`, `PATCH /me/subscriptions/:id` (slot, timezone), `POST /public/:subdomain/checkout`, `POST /me/subscriptions/:id/cancel`. After checkout the UI polls `GET /me/subscriptions`, because the webhook is the source of truth for payment state.
 
-**Tracking** (root paths, separate from `/api/v1`): `GET /t/o/:token.gif` (open pixel), `GET /t/c/:token` (click, 302 to a stored URL).
+**Tracking endpoints** (root paths, run as a separate process from the main API using the same codebase, different entrypoint, so pixel spikes never degrade API latency): `GET /t/o/:token.gif` (open pixel), `GET /t/c/:token` (click, 302 to a stored URL).
 
 **Operations:** `GET /healthz`, `/readyz`, `/metrics` (internal only), `POST /admin/publications/:id/sending` (pause or resume).
 
@@ -565,15 +565,15 @@ Summarized here, detailed in [failure-analysis.md](failure-analysis.md). Readers
 | [008](adr/008-entitlements.md) | Paid access from the database, cached in Redis | Proposed |
 | [009](adr/009-slot-scheduling-and-delivery-semantics.md) | Database-driven scheduling and at-most-once sending | Proposed |
 
-### Open questions
-1. Does "publish now" ignore delivery slots? Currently it does not. A writer option "send immediately" is the likely answer.
-2. Unknown-outcome emails: never resend automatically (current), or add a writer-triggered "resend to these"?
-3. Slot times (07:00, 13:00, 20:00) are assumptions.
-4. ID type: time-ordered UUIDv7 proposed.
-5. Session storage: a Postgres sessions table proposed.
-6. Password hashing: argon2 proposed.
-7. Domain name for the demo is not yet chosen. The sending domain needs SPF, DKIM and DMARC records.
-8. Razorpay recurring-payment rules and fees for small amounts must be checked before the billing design is final.
+### Open questions & decisions
+1. **Does "publish now" ignore delivery slots?** Resolved: `POST .../posts/:postId/publish` supports optional `sendImmediately: boolean`. When true, `send_at` is set directly to `now()`, bypassing slot deferrals so it sends on the next scheduler tick. When false/omitted, slot scheduling determines `send_at` for each subscriber.
+2. **ID type:** Resolved: Application-generated UUIDv7 (128-bit, time-ordered, index-friendly for B-trees).
+3. **Session storage:** Resolved: PostgreSQL `sessions` table with argon2 password hashing.
+4. **Partition safety:** Resolved: Pre-create 3 months, add a `DEFAULT` partition (`post_deliveries_default`), plus startup check and alert.
+5. **Unknown-outcome emails:** never resend automatically (current), or add a writer-triggered "resend to these"?
+6. **Slot times** (07:00, 13:00, 20:00) are assumptions.
+7. **Domain name** for the demo is not yet chosen. The sending domain needs SPF, DKIM and DMARC records.
+8. **Razorpay recurring-payment rules** and fees for small amounts must be checked before the billing design is final.
 
 ### Glossary
 - **Outbox:** a table written in the same transaction as a state change, so an event is never lost.

@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "."
+  },
+  "include": ["tests/**/*", "eslint.config.js", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist", "fixtures"]
+}

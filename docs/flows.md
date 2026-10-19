@@ -13,6 +13,7 @@ Status: draft v1. Each flow says what happens, which table or queue it touches, 
 
 ### 1.1 Publish (API request)
 `POST /publications/:pubId/posts/:postId/publish`
+Payload: `{ sendImmediately?: boolean }` (default `false`)
 
 In **one transaction**:
 1. Conditional update: `UPDATE posts SET status='published' (or 'scheduled'), published_at=..., version=version+1 WHERE id=$1 AND publication_id=$2 AND status='draft' RETURNING *`.
@@ -21,7 +22,7 @@ In **one transaction**:
 3. Sanitize the body and write `html_preview` and `html_full` into `post_contents`.
 4. Insert one `tracked_links` row per outbound link found in the post (only `http` and `https` URLs are allowed).
 5. Update the writing streak (see 6.2).
-6. Insert an `outbox_events` row: `PostPublished { postId, publicationId, scheduledFor }`.
+6. Insert an `outbox_events` row: `PostPublished { postId, publicationId, scheduledFor, sendImmediately }`.
 
 Commit, then return **202**. Nothing slow happens inside the request.
 
@@ -34,47 +35,49 @@ A worker loop, roughly every second:
 A crash between steps 2 and 3 republishes the event. That is fine because consumers are idempotent. Delete outbox rows older than 7 days.
 
 ### 1.3 Fan-out (page jobs)
-The first `PostPublished` message becomes `FanoutPage { postId, afterId: null }`. Each page job:
+The first `PostPublished` message becomes `FanoutPage { postId, afterId: null, sendImmediately }`. Each page job:
 1. Select the next 1,000 recipients: `status='active'`, `id > afterId`, ordered by `id`, not on the suppression list (publication-level or platform-wide).
 2. Compute `send_at` for each (see 1.4).
-3. Insert 1,000 `post_deliveries` rows in one statement with `status='pending'` and `ON CONFLICT DO NOTHING`.
-4. If the page was full, enqueue `FanoutPage { postId, afterId: lastId }`.
+3. Insert 1,000 `post_deliveries` rows in one statement with `status='pending'`, `updated_at=now()` and `ON CONFLICT DO NOTHING`.
+4. If the page was full, enqueue `FanoutPage { postId, afterId: lastId, sendImmediately }`.
 
 Why pages chain themselves: a crash only repeats one page (the inserts are no-ops the second time), and pages of different publications interleave in the queue, so a 500k publication cannot starve small ones.
 
 ### 1.4 Slot scheduling (computing `send_at`)
-- Slots (configurable, in the subscriber's timezone): morning 07:00, afternoon 13:00, evening 20:00.
-- `sendAt = next occurrence of the slot time in the subscriber's timezone, not earlier than max(now, post.scheduledFor)`, rounded up to the next 15-minute boundary.
-- This is one pure function, `computeSendAt(now, scheduledFor, slot, tz)`, tested with a fake clock across timezones.
-- If a reader changes slot or timezone while rows are still `pending`, update those rows' `send_at`.
+- If `sendImmediately === true`: `send_at = now()`, bypassing all slot deferrals so delivery is scheduled on the very next scheduler tick.
+- If `sendImmediately === false`:
+  - Slots (configurable, in the subscriber's timezone): morning 07:00, afternoon 13:00, evening 20:00.
+  - `sendAt = next occurrence of the slot time in the subscriber's timezone, not earlier than max(now, post.scheduledFor)`, rounded up to the next 15-minute boundary.
+  - This is one pure function, `computeSendAt(now, scheduledFor, slot, tz, sendImmediately)`, tested with a fake clock across timezones.
+- If a reader changes slot or timezone while rows are still `pending`, update those rows' `send_at` and `updated_at=now()`.
 - Readers who subscribe after fan-out only get later posts.
 
 ### 1.5 Scheduler
 A worker loop every 15 seconds. **The database is the schedule. The queue only holds work that is due.**
 1. If the send queue is deeper than a threshold, skip this tick (backpressure).
 2. Find due rows: `status='pending' AND send_at <= now()`, using a partial index on `send_at`. Take up to a fixed number per publication per tick so publications share capacity. Skip publications that are paused or over their `daily_send_limit`.
-3. In the same transaction, set those rows to `queued` (`FOR UPDATE SKIP LOCKED`, so two schedulers never take the same row).
+3. In the same transaction, set those rows to `queued` and update timestamp: `UPDATE post_deliveries SET status='queued', updated_at=now() WHERE ...` (`FOR UPDATE SKIP LOCKED`, so two schedulers never take the same row).
 4. After commit, enqueue messages of up to 100 delivery keys each.
 
 A rows-queued-but-message-lost case is repaired by the sweeper (1.7).
 
 ### 1.6 Sender
 Consumes a batch message of up to 100 delivery keys:
-1. **Claim:** one statement, `UPDATE post_deliveries SET status='sending', attempts=attempts+1, updated_at=now() WHERE (keys) AND status='queued' RETURNING ...`. Any key not returned was already claimed or finished, so it is skipped. **This is the duplicate guard.**
-2. **Check again just before sending:** subscription still `active`, address not suppressed, publication not paused, post still published. Otherwise mark `skipped`.
+1. **Claim:** one statement, `UPDATE post_deliveries SET status='sending', attempts=attempts+1, updated_at=now() WHERE (keys) AND status='queued' RETURNING ...`. Any key not returned was already claimed or finished, so it is skipped. **This is the duplicate guard.** Every status change must set `updated_at = now()` so the sweeper has accurate freshness.
+2. **Check again just before sending:** subscription still `active`, address not suppressed, publication not paused, post still published. Otherwise mark `status='skipped', updated_at=now()`.
 3. **Rate limit:** Redis token buckets (provider-wide and per publication). If Redis is down, use a conservative in-memory limit.
 4. **Build the email:** personalized unsubscribe link (signed token), `List-Unsubscribe` and `List-Unsubscribe-Post` headers, tracking pixel, rewritten tracked links.
 5. **Send** through the `EmailProvider` interface, with a timeout.
-6. **Record the result** in batched updates:
-   - Accepted: `status='sent'`, `provider_message_id`, `sent_at`.
-   - Explicit throttle or temporary rejection: back to `queued` with a delayed retry (exponential backoff plus jitter) until attempts run out, then `failed`.
-   - Permanent rejection (invalid address): `failed`, plus a suppression row.
-   - Timeout or connection loss after the request was sent: the outcome is **unknown**. Mark `failed` with error `unknown_outcome`. Never resend automatically.
+6. **Record the result** in batched updates (all updating `updated_at=now()`):
+   - Accepted: `status='sent'`, `provider_message_id`, `sent_at=now()`, `updated_at=now()`.
+   - Explicit throttle or temporary rejection: back to `status='queued'`, `updated_at=now()` with a delayed retry (exponential backoff plus jitter) until attempts run out, then `status='failed'`, `updated_at=now()`.
+   - Permanent rejection (invalid address): `status='failed'`, `updated_at=now()`, plus a suppression row.
+   - Timeout or connection loss after the request was sent: the outcome is **unknown**. Mark `status='failed'` with `last_error='unknown_outcome'`, `updated_at=now()`. Never resend automatically.
 7. Delete the queue message only after the batch is recorded. Set the visibility timeout longer than the worst-case batch time.
 
 ### 1.7 Sweeper (every few minutes)
-- Rows stuck in `sending` longer than 10 minutes: mark `failed` with `unknown_outcome` and count them in a metric.
-- Rows in `queued` longer than 30 minutes past `send_at`: put back to `pending` (safe, because they were never claimed).
+- Rows stuck in `sending` longer than 10 minutes (based on `updated_at`): mark `status='failed'` with `last_error='unknown_outcome'`, `updated_at=now()`, and count them in a metric.
+- Rows in `queued` longer than 30 minutes past `send_at`: put back to `status='pending'`, `updated_at=now()` (safe, because they were never claimed).
 
 ### 1.8 Bounce and complaint events
 Handled by the webhook path (section 3). A hard bounce or complaint inserts a `suppressions` row and sets the delivery to `bounced`. A complaint rate over the threshold sets the publication's `sending_status='paused'`.
@@ -98,6 +101,8 @@ stateDiagram-v2
 ---
 
 ## 2. Tracking (opens and clicks)
+
+**Process Isolation:** The tracking endpoints (`/t/o/:token.gif` and `/t/c/:token`) run as a dedicated, standalone process (same codebase, dedicated entrypoint `apps/api/src/tracking-server.ts` or `apps/tracking`). This protects the main API from event-loop saturation or connection-pool starvation when an email blast triggers sudden traffic spikes.
 
 **Token:** `base64url(payload).base64url(HMAC)`, where the payload holds a version, key id, subscription id, post id and link id. The key id allows key rotation.
 
@@ -202,7 +207,7 @@ Done inside the publish transaction, using the ISO week in IST: same week as `la
 - `post_deliveries` gains `updated_at timestamptz` (used by the sweeper).
 - Everything else is unchanged.
 
-## Open decisions
-1. **Does "publish now" ignore slots?** Currently it does not: each reader gets it at their next slot, which can be up to a day later. A writer option "send immediately" is the likely answer.
+## Decisions & open points
+1. **Does "publish now" ignore slots?** Resolved: Controlled by `sendImmediately: boolean` in `POST /publications/:pubId/posts/:postId/publish`. When true, `send_at` is set directly to `now()`, bypassing slot deferrals. When false, slot scheduling determines `send_at`.
 2. **Unknown-outcome policy:** currently never auto-resend. Alternative is a writer-triggered "resend to these" action.
 3. **Slot times** (07:00, 13:00, 20:00) are assumptions.

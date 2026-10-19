@@ -1,0 +1,100 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vichaar-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: vichaar
+      POSTGRES_PASSWORD: vichaar_pass
+      POSTGRES_DB: vichaar
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vichaar -d vichaar"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  postgres-replica:
+    image: postgres:16-alpine
+    container_name: vichaar-postgres-replica
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: vichaar
+      POSTGRES_PASSWORD: vichaar_pass
+      POSTGRES_DB: vichaar
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vichaar -d vichaar"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  redis:
+    image: redis:7-alpine
+    container_name: vichaar-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 600M
+
+  elasticmq:
+    image: softwaremill/elasticmq-native:1.6.6
+    container_name: vichaar-elasticmq
+    restart: unless-stopped
+    ports:
+      - "9324:9324"
+      - "9325:9325"
+    volumes:
+      - ./elasticmq.conf:/opt/elasticmq.conf
+    command: -Dconfig.file=/opt/elasticmq.conf
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    container_name: vichaar-clickhouse
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: vichaar
+    volumes:
+      - ./clickhouse-init.sql:/docker-entrypoint-initdb.d/init.sql
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: vichaar-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
