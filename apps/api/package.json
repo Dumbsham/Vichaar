@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@vichaar/db": "workspace:*",
+    "@vichaar/shared": "workspace:*",
     "cors": "^2.8.5",
     "express": "^5.0.0",
     "helmet": "^8.0.0",
