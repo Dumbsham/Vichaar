@@ -8,7 +8,7 @@ A Substack-style publishing platform for writers in any Indian language, priced 
 The product is small and the engineering is not: reliable email fan-out, a cache-first read path,
 and an event pipeline that never writes a click to the primary database.
 
-[![CI](https://github.com/Dumbsham/Vichaar/actions/workflows/blank.yml/badge.svg)](https://github.com/Dumbsham/Vichaar/actions/workflows/ci.yml)![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
+[![CI](https://github.com/Dumbsham/Vichaar/actions/workflows/ci.yml/badge.svg)](https://github.com/Dumbsham/Vichaar/actions/workflows/ci.yml)![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 [Live demo](#) · [System design](docs/design.md) · [Flows](docs/flows.md) · [Decision records](docs/adr) · [Benchmarks](docs/benchmarks.md)
