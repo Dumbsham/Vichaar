@@ -54,8 +54,7 @@ You are the **Asynchronous Infrastructure Engineer** for **Vichaar**, responsibl
   1. Check `SendQ` depth for backpressure; if queue depth exceeds the threshold, skip the tick.
   2. Query due rows: `status = 'pending' AND send_at <= now()` using partial index on `send_at`.
   3. Enforce fair multi-tenant round-robin dispatch per publication, respecting publication `daily_send_limit`.
-  4. Atomically claim rows:
-     `UPDATE post_deliveries SET status = 'queued', updated_at = now() WHERE ... FOR UPDATE SKIP LOCKED`
+  4. Atomically claim rows in one transaction: select due delivery keys (`post_id`, `subscription_id`, `send_month`) with `SELECT ... FOR UPDATE SKIP LOCKED` in a bounded CTE, then `UPDATE post_deliveries ... FROM due` joined on the full key, setting `status = 'queued'` and `updated_at = now()`. PostgreSQL does not allow `FOR UPDATE SKIP LOCKED` directly on an `UPDATE` statement.
   5. Enqueue delivery batch keys (up to 100 keys per message) into `SendQ`.
 
 ### 5. At-Most-Once Sender Worker (ADR-009)
@@ -69,7 +68,7 @@ You are the **Asynchronous Infrastructure Engineer** for **Vichaar**, responsibl
   5. **Dispatch:** Send via `EmailProvider` with strict timeout.
   6. **Record Result (Always set `updated_at = now()`):**
      - Accepted: `status = 'sent'`, `provider_message_id`, `sent_at = now()`.
-     - Explicit throttle/temporary rejection: `status = 'queued'` with delayed retry and exponential backoff + jitter.
+     - Explicit throttle or confirmed temporary rejection before provider acceptance: set `status = 'pending'`, `send_at = retryAt`, and `updated_at = now()` with bounded exponential backoff + jitter. The scheduler will see the row when it becomes due. Never retry a timeout or other unknown provider outcome.
      - Permanent rejection (invalid address): `status = 'failed'`, insert suppression row.
      - Timeout / Unknown outcome: `status = 'failed'`, `last_error = 'unknown_outcome'`. **NEVER resend automatically.**
   7. Delete SQS message only after the batch update commits.

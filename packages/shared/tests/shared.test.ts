@@ -16,6 +16,7 @@ import {
   signupSchema,
   loginSchema,
   createPublicationSchema,
+  createPostSchema,
   updatePostSchema,
   publishPostSchema,
   cursorPaginationSchema,
@@ -162,7 +163,24 @@ describe('Shared Zod Schemas', () => {
     expect(() => createPublicationSchema.parse({ name: 'Blog', subdomain: '-bad' })).toThrow();
     expect(() => createPublicationSchema.parse({ name: 'Blog', subdomain: 'bad-' })).toThrow();
     expect(() => createPublicationSchema.parse({ name: 'Blog', subdomain: 'ab' })).toThrow(); // min 3 chars
-    expect(() => createPublicationSchema.parse({ name: 'Blog', subdomain: 'Invalid_Name' })).toThrow();
+    expect(() =>
+      createPublicationSchema.parse({ name: 'Blog', subdomain: 'Invalid_Name' }),
+    ).toThrow();
+    expect(() =>
+      createPublicationSchema.parse({
+        name: 'Sender\r\nBcc: victim@example.test',
+        subdomain: 'safe-name',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts language-aware post slugs', () => {
+    expect(createPostSchema.parse({ title: 'हिंदी कहानी', slug: 'हिंदी-कहानी' }).slug).toBe(
+      'हिंदी-कहानी',
+    );
+    expect(createPostSchema.parse({ title: 'Café notes', slug: 'café-notes' }).slug).toBe(
+      'café-notes',
+    );
   });
 
   it('validates post updates requiring version for optimistic locking', () => {
@@ -174,6 +192,9 @@ describe('Shared Zod Schemas', () => {
 
     // Missing version must fail
     expect(() => updatePostSchema.parse({ title: 'No version' })).toThrow();
+    expect(() =>
+      updatePostSchema.parse({ version: 2, title: 'Story\r\nBcc: victim@example.test' }),
+    ).toThrow();
   });
 
   it('validates publish post schema with sendImmediately flag', () => {

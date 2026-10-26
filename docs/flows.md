@@ -56,7 +56,7 @@ Why pages chain themselves: a crash only repeats one page (the inserts are no-op
 A worker loop every 15 seconds. **The database is the schedule. The queue only holds work that is due.**
 1. If the send queue is deeper than a threshold, skip this tick (backpressure).
 2. Find due rows: `status='pending' AND send_at <= now()`, using a partial index on `send_at`. Take up to a fixed number per publication per tick so publications share capacity. Skip publications that are paused or over their `daily_send_limit`.
-3. In the same transaction, set those rows to `queued` and update timestamp: `UPDATE post_deliveries SET status='queued', updated_at=now() WHERE ...` (`FOR UPDATE SKIP LOCKED`, so two schedulers never take the same row).
+3. In the same transaction, select due delivery keys with `SELECT ... FOR UPDATE SKIP LOCKED` in a bounded CTE, then `UPDATE post_deliveries ... FROM due` joined on `(post_id, subscription_id, send_month)`, setting `status='queued'` and `updated_at=now()`. Two schedulers cannot claim the same row.
 4. After commit, enqueue messages of up to 100 delivery keys each.
 
 A rows-queued-but-message-lost case is repaired by the sweeper (1.7).
@@ -70,7 +70,7 @@ Consumes a batch message of up to 100 delivery keys:
 5. **Send** through the `EmailProvider` interface, with a timeout.
 6. **Record the result** in batched updates (all updating `updated_at=now()`):
    - Accepted: `status='sent'`, `provider_message_id`, `sent_at=now()`, `updated_at=now()`.
-   - Explicit throttle or temporary rejection: back to `status='queued'`, `updated_at=now()` with a delayed retry (exponential backoff plus jitter) until attempts run out, then `status='failed'`, `updated_at=now()`.
+   - Explicit throttle or confirmed temporary rejection before provider acceptance: return to `status='pending'`, set `send_at` to the delayed retry time and `updated_at=now()` (bounded exponential backoff plus jitter). The scheduler will claim it again when due. When attempts run out, set `status='failed'`, `updated_at=now()`. A timeout or ambiguous outcome is never retried automatically.
    - Permanent rejection (invalid address): `status='failed'`, `updated_at=now()`, plus a suppression row.
    - Timeout or connection loss after the request was sent: the outcome is **unknown**. Mark `status='failed'` with `last_error='unknown_outcome'`, `updated_at=now()`. Never resend automatically.
 7. Delete the queue message only after the batch is recorded. Set the visibility timeout longer than the worst-case batch time.
@@ -89,7 +89,7 @@ stateDiagram-v2
     pending --> queued: scheduler claims when send_at is reached
     queued --> sending: sender claims row
     sending --> sent: provider accepted
-    sending --> queued: throttled, retry later
+    sending --> pending: confirmed rejection, retry at send_at
     sending --> failed: permanent error or unknown outcome
     pending --> skipped: unsubscribed or post unpublished
     queued --> skipped: re-checked just before sending

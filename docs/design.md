@@ -77,6 +77,14 @@ Comments, podcasts and video, mobile apps, recommendations, multi-author teams, 
 - Demo scale is simulated with seeded data and load tests against a stubbed email provider.
 - Writers must confirm they have consent for any address they add (India's DPDP Act).
 
+## Current implementation (Phase 1B)
+
+The local demo API now supports signup, login and logout with Argon2id password hashes and hashed PostgreSQL sessions. Auth requests use a Redis token bucket with a smaller local fallback when Redis is unavailable. It also supports tenant-scoped publication and draft post endpoints; version-checked autosave; and a publish transaction that writes sanitized HTML, tracked link rows, a writing streak, and one `PostPublished` outbox event. A public endpoint returns only the preview of a published post. The full body of a paid post is never returned by that endpoint.
+
+A future scheduled time can be recorded on a post, but the scheduler and outbox relay are Phase 2 work. A published outbox row therefore does not yet send email. The Next.js editor, Redis/CDN read path, paywall, and worker processes remain future phases. The Terraform production blueprint is not deployed.
+
+For deployments behind a reverse proxy, set `TRUST_PROXY` to that proxy's specific address or CIDR so `req.ip` used by rate limiting identifies the reader. Direct API access leaves proxy trust disabled. This must match the actual Caddy/network setup before enabling it.
+
 ## Capacity estimation
 
 Every number is an assumption and can be changed. One day is 86,400 seconds, so per-day divided by 86,400 gives the per-second average.
@@ -507,7 +515,7 @@ Full detail with steps and failure handling is in [flows.md](flows.md).
 | Outbox relay | Polls unpublished outbox rows with `SKIP LOCKED`, sends them to the queue, marks them published. At least once. |
 | Fan-out | Chained page jobs of 1,000 recipients insert `pending` delivery rows with `ON CONFLICT DO NOTHING`. |
 | Scheduler | Moves due rows `pending -> queued` fairly across publications, with backpressure, and enqueues batches. |
-| Sender | Atomically claims rows `queued -> sending`, re-checks eligibility, sends, records the result. At most once. |
+| Sender | Atomically claims rows `queued -> sending`, re-checks eligibility, sends, records the result. Confirmed pre-acceptance temporary rejections return to `pending` with a future `send_at`; unknown outcomes become failed and are never retried automatically. At most once. |
 | Tracking | Verify a signed token, buffer the event, answer immediately. Batch consumer writes to ClickHouse. |
 | Billing | Verified webhook is stored, enqueued, applied only if newer than `last_event_at`. Hourly reconciliation repairs gaps. |
 | Entitlement | Redis cache, then Postgres. Postgres down means 503, never a wrongful 403. |

@@ -52,6 +52,6 @@ You are the **Frontend & UI Specialist** for **Vichaar**, an observable, scalabl
 
 ## Code Quality Standards
 
-1. **TypeScript Strictness:** Strict mode enabled. No `any`, no unsafe type assertions (`as`). All API inputs and outputs must validate against Zod schemas from `@vichaar/shared`.
+1. **TypeScript Strictness:** Strict mode enabled. No `any`, no unsafe type assertions (`as`). Validate API request and response data against the schemas published by `@vichaar/shared`; the API owns those contracts. Frontend-only form rules may refine the user experience but must not redefine API acceptance rules.
 2. **Error Handling:** Gracefully handle API errors (`401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `409 Conflict`, `422 Unprocessable`, `503 Service Unavailable`). When paywall returns 503, display a friendly retry notice (fail-closed behavior).
 3. **Accessibility:** Semantic HTML elements, full keyboard navigability, high-contrast dark/light modes, and proper ARIA labels.

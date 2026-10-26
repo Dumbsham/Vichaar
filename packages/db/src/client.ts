@@ -24,11 +24,15 @@ export function createDatabaseClients(config: DatabaseConfig): DatabaseClients {
   const primaryPool = new Pool({
     connectionString: config.primaryUrl,
     max: config.maxConnections ?? 10,
+    connectionTimeoutMillis: 3000,
+    statement_timeout: 5000,
   });
 
   const replicaPool = new Pool({
     connectionString: config.replicaUrl || config.primaryUrl,
     max: config.maxConnections ?? 10,
+    connectionTimeoutMillis: 3000,
+    statement_timeout: 5000,
   });
 
   const primary = drizzle(primaryPool, { schema });

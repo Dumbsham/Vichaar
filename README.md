@@ -15,7 +15,7 @@ and an event pipeline that never writes a click to the primary database.
 
 </div>
 
-> **Status:** design complete, implementation starting. The roadmap below tracks progress, and benchmark numbers are only published once they have been measured.
+> **Status:** Phase 1B API domain foundation is implemented. The web editor, email delivery workers, billing, and analytics flows are still planned. The roadmap below tracks progress, and benchmark numbers are only published once they have been measured.
 
 ---
 
@@ -269,7 +269,9 @@ vichaar/
 
 ## Roadmap
 
-- [ ] Foundation: auth, publications, tenant scoping, editor, public post pages
+- [x] Phase 1B API foundation: database-backed auth, tenant-scoped publications and posts, safe previews, and transactional publish outbox
+
+- [ ] Foundation UI: editor and rendered public post pages
 - [ ] Delivery: double opt-in, outbox, fan-out, idempotent sending, bounce handling, slot scheduler
 - [ ] Read path: caching, CDN, read replica, load tests
 - [ ] Paid subscriptions: Razorpay, webhooks, paywall, reconciliation
