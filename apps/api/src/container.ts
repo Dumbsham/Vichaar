@@ -17,6 +17,11 @@ import {
   createPostService,
   type PostService,
 } from './modules/posts/index.js';
+import {
+  createSubscriptionRepository,
+  createSubscriptionService,
+  type SubscriptionService,
+} from './modules/subscriptions/index.js';
 
 export interface AppContainer {
   db?: DatabaseClients;
@@ -24,6 +29,7 @@ export interface AppContainer {
   authService?: AuthService;
   publicationService?: PublicationService;
   postService?: PostService;
+  subscriptionService?: SubscriptionService;
   rateLimiter?: RateLimiter;
   close: () => Promise<void>;
 }
@@ -32,6 +38,12 @@ export interface ContainerConfig {
   databaseReplicaUrl?: string;
 }
 export function createContainer(config: ContainerConfig): AppContainer {
+  if (
+    process.env.NODE_ENV === 'production' &&
+    (!process.env.TOKEN_HMAC_SECRET || process.env.TOKEN_HMAC_SECRET.length < 32)
+  ) {
+    throw new Error('TOKEN_HMAC_SECRET must be configured in production');
+  }
   const db = createDatabaseClients({
     primaryUrl: config.databaseUrl,
     replicaUrl: config.databaseReplicaUrl,
@@ -53,12 +65,18 @@ export function createContainer(config: ContainerConfig): AppContainer {
     publicationService,
     clock,
   });
+  const subscriptionService = createSubscriptionService({
+    repository: createSubscriptionRepository({ pool: db.primaryPool }),
+    publicationService,
+    tokenSecret: process.env.TOKEN_HMAC_SECRET ?? 'local_development_hmac_secret_32chars_min!',
+  });
   return {
     db,
     healthService,
     authService,
     publicationService,
     postService,
+    subscriptionService,
     rateLimiter,
     close: async () => {
       await rateLimiter.close();

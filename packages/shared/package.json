@@ -10,6 +10,8 @@
     "./errors": "./src/errors.ts",
     "./clock": "./src/clock.ts",
     "./tokens": "./src/tokens.ts",
+    "./subscription-tokens": "./src/subscription-tokens.ts",
+    "./scheduling": "./src/scheduling.ts",
     "./schemas": "./src/schemas/index.ts"
   },
   "scripts": {

@@ -19,10 +19,17 @@ import { createHealthRouter } from './modules/health/index.js';
 import { createAuthRouter } from './modules/auth/index.js';
 import { createPublicationRouter } from './modules/publications/index.js';
 import { createPostRouter, createPublicPostRouter } from './modules/posts/index.js';
+import {
+  createSubscriptionRouter,
+  createConfirmationRouter,
+  subscribeSchema,
+} from './modules/subscriptions/index.js';
 
 export function createServer(container: AppContainer): Express {
   const app = express();
+
   const trustedProxy = process.env.TRUST_PROXY?.trim();
+
   if (trustedProxy) app.set('trust proxy', trustedProxy);
   const rateLimiter = container.rateLimiter;
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -51,6 +58,20 @@ export function createServer(container: AppContainer): Express {
     }
     next();
   });
+  app.use(async (req, _res, next) => {
+    if (
+      req.method === 'POST' &&
+      (/^\/public\/[a-z0-9-]+\/subscribe$/.test(req.path) || req.path === '/subscribe-demo') &&
+      rateLimiter
+    ) {
+      const allowed = await rateLimiter.consume(`subscribe:${req.ip ?? 'unknown'}`, 5, 60);
+      if (!allowed) {
+        next(new AppError('Too many subscription requests', 429, 'RATE_LIMITED'));
+        return;
+      }
+    }
+    next();
+  });
   app.use((req, _res, next) => {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       const origin = req.get('origin');
@@ -71,7 +92,7 @@ export function createServer(container: AppContainer): Express {
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
   app.use('/', createHealthRouter({ healthService: container.healthService }));
-  const { authService, publicationService, postService } = container;
+  const { authService, publicationService, postService, subscriptionService } = container;
   if (authService && publicationService && postService) {
     app.use('/auth', createAuthRouter({ authService }));
     app.use('/publications/:pubId', async (req, _res, next) => {
@@ -88,6 +109,45 @@ export function createServer(container: AppContainer): Express {
     app.use('/publications', createPublicationRouter({ publicationService, authService }));
     app.use('/publications/:pubId/posts', createPostRouter({ postService, authService }));
     app.use('/public/:subdomain', createPublicPostRouter({ postService }));
+    if (subscriptionService) {
+      app.use('/public/:subdomain', createSubscriptionRouter({ service: subscriptionService }));
+      app.use('/subscriptions', createConfirmationRouter({ service: subscriptionService }));
+      app.get('/subscribe-demo', (req, res) => {
+        const token =
+          typeof req.query.token === 'string' && /^[A-Za-z0-9._-]{1,2048}$/.test(req.query.token)
+            ? req.query.token
+            : '';
+        res
+          .type('html')
+          .send(
+            `<!doctype html><html lang="en"><meta charset="utf-8"><title>Subscribe</title><h1>Subscribe</h1><form method="post" action="/subscribe-demo"><label>Publication subdomain <input name="subdomain" required></label><label>Email <input type="email" name="email" required></label><label>Slot <select name="slot"><option>morning</option><option>afternoon</option><option>evening</option></select></label><label>Timezone <input name="timezone" value="Asia/Kolkata" required></label><button>Request confirmation</button></form><h2>Confirm</h2><form method="post" action="/subscriptions/confirm"><label>Token <input name="token" value="${token}" required></label><button>Confirm</button></form>`,
+          );
+      });
+      app.post('/subscribe-demo', async (req, res) => {
+        const subdomain = z.string().min(3).max(30).parse(req.body.subdomain);
+        await subscriptionService.subscribe(
+          subdomain,
+          subscribeSchema.parse(req.body),
+          z.string().parse(req.headers['x-correlation-id']),
+        );
+        res.status(202).type('text').send('If this address can subscribe, check your inbox.');
+      });
+      app.get('/unsubscribe/:token', (req, res) => {
+        const token = z
+          .string()
+          .regex(/^[A-Za-z0-9._-]{1,2048}$/)
+          .parse(req.params.token);
+        res
+          .type('html')
+          .send(
+            `<!doctype html><html lang="en"><meta charset="utf-8"><title>Unsubscribe</title><h1>Unsubscribe</h1><form method="post" action="/unsubscribe/${token}"><button>Unsubscribe</button></form>`,
+          );
+      });
+      app.post('/unsubscribe/:token', async (req, res) => {
+        await subscriptionService.unsubscribe(z.string().parse(req.params.token));
+        res.status(204).end();
+      });
+    }
   }
   const apiV1Router = express.Router();
   apiV1Router.get('/ping', (_req, res) => res.json({ message: 'pong' }));

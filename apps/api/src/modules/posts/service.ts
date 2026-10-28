@@ -117,6 +117,7 @@ export interface PostService {
     ownerId: string,
     postId: string,
     input: PublishPostInput,
+    correlationId: string,
   ): Promise<ReturnType<typeof postView>>;
   publicPreview(subdomain: string, slug: string): Promise<object>;
 }
@@ -168,7 +169,7 @@ export function createPostService({
       }
       return postView(row);
     },
-    async publish(publicationId, ownerId, postId, input) {
+    async publish(publicationId, ownerId, postId, input, correlationId) {
       const publication = await publicationService.getOwned(publicationId, ownerId);
       const draft = await postRepo.find(publicationId, postId);
       if (!draft) throw new NotFoundError();
@@ -193,6 +194,7 @@ export function createPostService({
         scheduledFor: draft.scheduled_for,
         now,
         weekStart: weekStartIST(now),
+        correlationId,
       });
       if (!result) throw new VersionConflictError();
       return postView(result.row);

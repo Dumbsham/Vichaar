@@ -10,6 +10,11 @@ export const logger = pino({
     paths: [
       'req.headers.authorization',
       'req.headers.cookie',
+      'req.headers.referer',
+      'req.headers.referrer',
+      'req.url',
+      'req.query',
+      'req.params',
       'req.body.password',
       'req.body.passwordConfirmation',
       'req.body.token',

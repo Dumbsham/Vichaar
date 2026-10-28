@@ -42,6 +42,7 @@ export interface PostRepository {
     scheduledFor: Date | null;
     now: Date;
     weekStart: string;
+    correlationId: string;
   }): Promise<PublishResult>;
 }
 export function createPostRepository({ pool }: { pool: Pool }): PostRepository {
@@ -163,7 +164,7 @@ export function createPostRepository({ pool }: { pool: Pool }): PostRepository {
         const status =
           input.scheduledFor && input.scheduledFor > input.now ? 'scheduled' : 'published';
         const updated = await client.query<PostRow>(
-          `UPDATE posts SET status=$3,published_at=$4,version=version+1,updated_at=$5
+          `UPDATE posts SET status=$3,published_at=$4,delivery_month=date_trunc('month',$5::timestamptz)::date,version=version+1,updated_at=$5
            WHERE publication_id=$1 AND id=$2 RETURNING *`,
           [
             input.publicationId,
@@ -204,6 +205,7 @@ export function createPostRepository({ pool }: { pool: Pool }): PostRepository {
             publicationId: input.publicationId,
             scheduledFor: input.scheduledFor?.toISOString() ?? null,
             sendImmediately: input.sendImmediately,
+            correlationId: input.correlationId,
           },
         ]);
         await client.query('COMMIT');

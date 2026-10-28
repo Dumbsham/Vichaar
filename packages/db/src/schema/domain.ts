@@ -9,6 +9,8 @@ import {
   date,
   uniqueIndex,
   index,
+  primaryKey,
+  boolean,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -69,6 +71,7 @@ export const posts = pgTable(
     status: text('status').notNull().default('draft'),
     scheduledFor: utc('scheduled_for'),
     publishedAt: utc('published_at'),
+    deliveryMonth: date('delivery_month'),
     version: integer('version').notNull().default(1),
     createdAt: utc('created_at').notNull().defaultNow(),
     updatedAt: utc('updated_at').notNull().defaultNow(),
@@ -138,3 +141,72 @@ export const writingStreaks = pgTable('writing_streaks', {
   longestWeeks: integer('longest_weeks').notNull().default(0),
   lastPostWeek: date('last_post_week'),
 });
+
+export const subscriptions = pgTable(
+  'subscriptions',
+  {
+    id: uuid('id').primaryKey(),
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    email: text('email').notNull(),
+    status: text('status').notNull().default('pending'),
+    slot: text('slot').notNull().default('morning'),
+    timezone: text('timezone').notNull().default('Asia/Kolkata'),
+    confirmationTokenHash: text('confirmation_token_hash'),
+    confirmationExpiresAt: utc('confirmation_expires_at'),
+    confirmationSentAt: utc('confirmation_sent_at'),
+    confirmationDispatchedAt: utc('confirmation_dispatched_at'),
+    confirmationCount: integer('confirmation_count').notNull().default(0),
+    confirmationDay: date('confirmation_day'),
+    createdAt: utc('created_at').notNull().defaultNow(),
+    updatedAt: utc('updated_at').notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('subscriptions_publication_email_unique').on(table.publicationId, table.email),
+    index('subscriptions_active_page_idx')
+      .on(table.publicationId, table.id)
+      .where(sql`${table.status}='active'`),
+  ],
+);
+export const suppressions = pgTable(
+  'suppressions',
+  {
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    email: text('email').notNull(),
+    reason: text('reason').notNull(),
+    createdAt: utc('created_at').notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.publicationId, table.email] })],
+);
+export const postDeliveries = pgTable(
+  'post_deliveries',
+  {
+    postId: uuid('post_id').notNull(),
+    subscriptionId: uuid('subscription_id').notNull(),
+    sendMonth: date('send_month').notNull(),
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    sendAt: utc('send_at').notNull(),
+    sendImmediately: boolean('send_immediately').notNull().default(false),
+    correlationId: text('correlation_id'),
+    status: text('status').notNull().default('pending'),
+    providerMessageId: text('provider_message_id'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    sentAt: utc('sent_at'),
+    updatedAt: utc('updated_at').notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.postId, table.subscriptionId, table.sendMonth] }),
+    index('post_deliveries_due_idx')
+      .on(table.sendAt, table.publicationId)
+      .where(sql`${table.status}='pending'`),
+    index('post_deliveries_stale_idx')
+      .on(table.status, table.updatedAt)
+      .where(sql`${table.status} IN ('queued','sending')`),
+  ],
+);

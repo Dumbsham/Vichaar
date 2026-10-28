@@ -11,7 +11,7 @@
 
 </div>
 
-> **Current status:** Phase 1B is implemented as an Express API. The reader-facing web app and email delivery pipeline are not implemented yet. The architecture and scale numbers below are design goals, not measured results.
+> **Current status:** Phase 2 is implemented locally: double opt-in subscriptions and the outbox-to-email delivery pipeline. The reader-facing Next.js app, billing, tracking ingestion, and deployment containers are later phases. The scale numbers below remain unmeasured design goals.
 
 ## What works today
 
@@ -21,8 +21,10 @@
 - **Publishing:** The API sanitizes post HTML and commits the post, tracked links, writing streak, and a `PostPublished` outbox event in one transaction. Repeating the publish request does not create a second event.
 - **Public previews:** A published post can be read by subdomain and slug. A paid post's full body is not returned by this public endpoint.
 - **Project foundation:** The pnpm workspace, strict TypeScript, module-boundary lint rule, PostgreSQL migrations, health checks, local Compose dependencies, and CI are in place.
+- **Subscriptions:** Readers request a confirmation email without exposing whether an address is already subscribed. Signed links confirm once; signed unsubscribe links add a suppression and stop pending sends. Readers can change slot and timezone while deliveries remain pending. `/subscribe-demo` is a plain HTML verification page.
+- **Delivery:** Five separately run workers relay outbox events through ElasticMQ, fan out active subscribers in pages, claim due rows fairly with a daily publication cap, send through a stub, Mailpit SMTP, or SES sandbox provider, and sweep stale rows. A sender claims a row before calling the provider; ambiguous outcomes are flagged and never automatically retried. Monthly partitions and a default partition hold the delivery ledger.
 
-A future publication time can be stored on a post, but scheduled posts are not automatically released yet. Outbox events are stored but **no worker relays them or sends email**. There is no Next.js frontend, checkout, paywall, or analytics endpoint yet.
+Scheduled posts are released by the scheduler when due. There is no Next.js frontend, checkout, paywall, or analytics endpoint yet. Email links are sent directly; open and click tracking are Phase 5 work.
 
 ## Run the current API locally
 
@@ -34,12 +36,12 @@ cd Vichaar
 pnpm install
 pnpm stack:up
 pnpm db:migrate
-pnpm --filter @vichaar/api dev
+pnpm dev
 ```
 
-The API listens on `http://localhost:4000`. Check `GET /healthz` for process health and `GET /readyz` for PostgreSQL connectivity. `pnpm db:seed` currently checks the baseline migration record; it does not create sample writers or posts.
+The API listens on `http://localhost:4000`. `pnpm dev` also starts the five worker roles as separate processes. Check `GET /healthz` for process health and `GET /readyz` for PostgreSQL connectivity. `pnpm db:seed` currently checks the baseline migration record; it does not create sample writers or posts.
 
-[`.env.example`](.env.example) documents configuration. The current scripts do not automatically load `.env`; export variables or provide them through your process manager when changing the defaults. The local PostgreSQL and Redis defaults match the Compose ports. `TRUST_PROXY` should be set only to a known reverse proxy address or CIDR when deploying behind one.
+The workers need local SQS credentials exported, such as `AWS_ACCESS_KEY_ID=test` and `AWS_SECRET_ACCESS_KEY=test`. [`.env.example`](.env.example) documents the remaining configuration. Scripts do not automatically load `.env`; export variables or provide them through your process manager. The local defaults target Compose. `TRUST_PROXY` should be set only to a known reverse proxy address or CIDR when deploying behind one.
 
 ### API routes available now
 
@@ -53,6 +55,11 @@ The API listens on `http://localhost:4000`. Check `GET /healthz` for process hea
 | `POST`         | `/publications/:pubId/posts/:postId/publish`  | Publish or record a future schedule; returns `202` |
 | `GET`          | `/public/:subdomain/posts/:slug`              | Read a published public preview                    |
 | `GET`          | `/healthz`, `/readyz`                         | Liveness and database readiness                    |
+| `POST`         | `/public/:subdomain/subscribe`                | Request double opt-in; always returns `202`        |
+| `POST`         | `/subscriptions/confirm`                      | Confirm a signed link                              |
+| `GET`, `POST`  | `/unsubscribe/:token`                         | Show and submit unsubscribe                        |
+| `GET`, `POST`  | `/subscriptions/preferences/:token`           | Change a reader's slot and timezone                |
+| `GET`, `POST`  | `/subscribe-demo`                             | Plain HTML subscribe/confirmation page             |
 
 For request shapes, see the [shared Zod schemas](packages/shared/src/schemas/) and the [Phase 1B plan](docs/MasterPlan.md#phase-1b-domain-foundation-auth-tenant-scoping-publications--posts).
 
@@ -65,21 +72,23 @@ pnpm lint
 REDIS_TEST_URL=redis://localhost:6379 pnpm test
 ```
 
-`pnpm lint` runs ESLint and TypeScript checks. `pnpm test` runs Vitest, including API tests against real PostgreSQL; setting `REDIS_TEST_URL` also runs the shared Redis rate-limit test. CI starts PostgreSQL and Redis, applies migrations, then runs these checks along with dependency and secret scans. Test counts can change as the project grows.
+`pnpm lint` runs ESLint and TypeScript checks. `pnpm test` runs Vitest, including API and pipeline tests against real PostgreSQL, Redis, and ElasticMQ with a stub email provider. The kill-sender chaos test uses an isolated local ElasticMQ queue. Setting `REDIS_TEST_URL` also runs the shared Redis rate-limit test. Run `pnpm db:migrate` first. Test counts can change as the project grows.
 
 ## Design direction
 
-Vichaar is planned as a modular monolith with separate workers. PostgreSQL holds durable state; Redis is for cache and rate limits. Domain changes are recorded in a transactional outbox so a future relay can publish them through an SQS-compatible queue. The proposed delivery flow is outbox relay → subscriber fan-out → slot scheduler → sender, with an atomic delivery claim before an email is sent. Ambiguous send outcomes would be flagged rather than automatically retried. Open and click events are planned for batched ClickHouse ingestion instead of per-event PostgreSQL writes.
+Vichaar is a modular monolith with separate delivery workers. PostgreSQL holds durable state; Redis is for rate limits. Domain changes are recorded in a transactional outbox and relayed through an SQS-compatible queue. The implemented delivery flow is outbox relay → subscriber fan-out → slot scheduler → sender, with an atomic delivery claim before an email is sent. Ambiguous send outcomes are flagged rather than automatically retried. Open and click events remain planned for batched ClickHouse ingestion instead of per-event PostgreSQL writes.
 
 The design targets include 500,000 recipients for one send, 1,000 emails per second, cache-first post reads, and operation on a 2 vCPU / 12 GB demo machine. These are **unverified targets**. The calculations, resource budget, and tradeoffs are in [docs/design.md](docs/design.md); measured benchmarks will be added only after real runs.
 
-The local [Compose file](infra/compose/docker-compose.yml) defines PostgreSQL, a second PostgreSQL container, Redis, ElasticMQ, ClickHouse, and Mailpit. The second PostgreSQL container is **not configured as a streaming replica** yet. Caddy, API/web/worker containers, observability services, and the Terraform production blueprint described in the design remain future work. No live demo or production deployment is claimed here.
+The local [Compose file](infra/compose/docker-compose.yml) defines PostgreSQL, a second PostgreSQL container, Redis, ElasticMQ, ClickHouse, and Mailpit. The API and workers run as local Node processes during this phase. The second PostgreSQL container is **not configured as a streaming replica** yet. Caddy, API/web/worker containers, an OpenTelemetry collector, and the Terraform production blueprint remain future work. No live demo or production deployment is claimed here.
 
 ## Repository map
 
 ```text
 apps/api/          Express API: auth, publications, posts, health
+apps/workers/      Delivery workers and email providers
 packages/db/       PostgreSQL client, Drizzle schemas, SQL migrations
+packages/queue/    Typed SQS-compatible queues
 packages/shared/   Zod contracts, errors, clock, signed-token helpers
 infra/compose/     Local dependency containers
 fixtures/          Boundary-rule test fixture
@@ -91,7 +100,7 @@ docs/              Design, flows, threat model, failure analysis, ADRs
 
 - [x] Phase 1A: workspace, local infrastructure, baseline migration, health API, CI
 - [x] Phase 1B: accounts, tenant-scoped publications and posts, draft versioning, safe previews, publish outbox
-- [ ] Phase 2: double opt-in subscriptions and the email delivery workers
+- [x] Phase 2: double opt-in subscriptions and the email delivery workers
 - [ ] Phase 3: CDN/Redis read path and working read replica
 - [ ] Phase 4: Razorpay subscriptions, webhooks, and paywall
 - [ ] Phase 5: open/click tracking and ClickHouse analytics pipeline

@@ -65,6 +65,7 @@ export function createPostRouter({
           user.id,
           uuid.parse(req.params.postId),
           publishPostSchema.parse(req.body),
+          z.string().parse(req.headers['x-correlation-id']),
         ),
       );
   });

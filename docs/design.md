@@ -77,11 +77,13 @@ Comments, podcasts and video, mobile apps, recommendations, multi-author teams, 
 - Demo scale is simulated with seeded data and load tests against a stubbed email provider.
 - Writers must confirm they have consent for any address they add (India's DPDP Act).
 
-## Current implementation (Phase 1B)
+## Current implementation (Phase 2)
 
 The local demo API now supports signup, login and logout with Argon2id password hashes and hashed PostgreSQL sessions. Auth requests use a Redis token bucket with a smaller local fallback when Redis is unavailable. It also supports tenant-scoped publication and draft post endpoints; version-checked autosave; and a publish transaction that writes sanitized HTML, tracked link rows, a writing streak, and one `PostPublished` outbox event. A public endpoint returns only the preview of a published post. The full body of a paid post is never returned by that endpoint.
 
-A future scheduled time can be recorded on a post, but the scheduler and outbox relay are Phase 2 work. A published outbox row therefore does not yet send email. The Next.js editor, Redis/CDN read path, paywall, and worker processes remain future phases. The Terraform production blueprint is not deployed.
+Phase 2 adds double opt-in subscriptions, signed confirmation and unsubscribe links, suppression, reader delivery preferences, a monthly partitioned delivery ledger, and five separately run worker roles. The outbox relay publishes typed SQS messages; fan-out pages active subscribers in batches of 1,000; the scheduler uses a durable round-robin publication cursor, daily send budgets, and queue-depth backpressure; the sender claims up to 100 delivery rows in one statement before any provider call. A stale `sending` row becomes `failed: unknown_outcome` and is never automatically sent again. Explicit temporary SMTP rejections can return to `pending` with bounded exponential backoff and jitter. The sweeper also recovers stale `queued` rows and purges published outbox records older than seven days.
+
+The local demo runs API and worker Node processes against Compose dependencies. The SMTP path targets Mailpit locally; tests use a stub provider. SES is restricted to production and configured verified sandbox recipients. The Next.js editor, Redis/CDN read path, paywall, tracking ingestion, containerized API/workers, and Terraform deployment remain future phases. Public email links remain direct until the Phase 5 tracking endpoints exist. No live demo or production deployment is claimed.
 
 For deployments behind a reverse proxy, set `TRUST_PROXY` to that proxy's specific address or CIDR so `req.ip` used by rate limiting identifies the reader. Direct API access leaves proxy trust disabled. This must match the actual Caddy/network setup before enabling it.
 
@@ -164,7 +166,7 @@ Target machine: 2 vCPU, 12 GB RAM, running every service. These are starting lim
 
 A 4 GB swapfile is a safety net, not working memory. If swap is used in normal operation the budget is wrong. Under pressure, observability and analytics are sacrificed first, then the replica. The primary, API and sender are protected.
 
-**CPU is the likelier constraint.** Rough peak shares of 2 vCPU: Postgres 0.5-0.7, sender and fan-out 0.5-0.8, API and web 0.3-0.5, analytics and observability 0.3-0.4. Peaks overlap, so priorities apply: the sender is capped at `cpus: 1.0`, the API and web get a higher `cpu_shares`, and sender concurrency is capped. Connection pools: API 10, each worker 5.
+**CPU is the likelier constraint.** Rough peak shares of 2 vCPU: Postgres 0.5-0.7, sender and fan-out 0.5-0.8, API and web 0.3-0.5, analytics and observability 0.3-0.4. Peaks overlap, so priorities apply: the sender is capped at `cpus: 1.0` in the future container deployment, the API and web get a higher `cpu_shares`, and sender concurrency is capped. The current API opens at most 10 primary and 10 replica pool connections; each of the five workers opens at most 3 primary and 3 replica connections, for an upper bound of 50 connections when the replica URL points at the primary. The local worker supervisor is not container-limited yet; the 1.2 GB worker budget remains to be measured under load before deployment.
 
 `sustainable sends per second = vCPUs available to the send path / CPU-seconds per email`. Measure CPU milliseconds per email early (Phase 2). If the measured value does not support 1,000 per second on this VM, publish the measured number as the target instead of hiding it. Load generators (k6) run from a separate machine.
 
@@ -321,6 +323,7 @@ erDiagram
         text status "draft, scheduled, published"
         timestamptz scheduled_for
         timestamptz published_at
+        date delivery_month "fixed at publish for idempotency"
         int version "cache invalidation"
         timestamptz created_at
     }
@@ -335,14 +338,14 @@ erDiagram
     subscriptions {
         uuid id PK
         uuid publication_id FK
-        uuid user_id FK "nullable"
         citext email "unique with publication"
-        text status "pending, active, unsubscribed, suppressed"
-        text delivery_slot "morning, afternoon, evening"
+        text status "pending, active, unsubscribed"
+        text slot "morning, afternoon, evening"
         text timezone "default Asia/Kolkata"
-        text confirm_token_hash
-        timestamptz confirmed_at
-        timestamptz unsubscribed_at "consent record"
+        text confirmation_token_hash
+        timestamptz confirmation_expires_at
+        timestamptz confirmation_dispatched_at
+        int confirmation_count "daily cap"
         timestamptz created_at
     }
 
@@ -364,6 +367,8 @@ erDiagram
         date send_month PK "partition key"
         uuid publication_id FK
         timestamptz send_at "slot time"
+        boolean send_immediately "slot bypass"
+        text correlation_id "request through sender"
         text status "pending, queued, sending, sent, failed, skipped, bounced"
         text provider_message_id
         int attempts
@@ -380,10 +385,9 @@ erDiagram
     }
 
     suppressions {
-        uuid id PK
-        uuid publication_id FK "null means platform-wide"
-        citext email
-        text reason "hard_bounce, complaint, manual"
+        uuid publication_id PK, FK
+        citext email PK
+        text reason "unsubscribe or permanent rejection"
         timestamptz created_at
     }
 
@@ -418,26 +422,29 @@ erDiagram
 - `paid_subscriptions (subscription_id)` and `(razorpay_subscription_id)`
 - `milestones (publication_id, kind, threshold)`, which makes a milestone fire exactly once
 - `quote_cards (post_id, quote_hash)`
-- `suppressions (publication_id, email)`, with a second partial unique index on `email` where `publication_id IS NULL` for platform-wide entries
+- `suppressions (publication_id, email)`; platform-wide suppression is planned with email-event ingestion
 - `post_deliveries (post_id, subscription_id, send_month)` as the primary key
 
 ### Key indexes
-- `subscriptions (publication_id, status, delivery_slot, id)` for paging recipients during fan-out
+- `subscriptions (publication_id, id)` partial where `status = 'active'` for keyset fan-out
 - `posts (publication_id, status, published_at DESC, id DESC)` for keyset-paginated lists
 - `post_deliveries (send_at)` partial, where `status = 'pending'`, for the scheduler
 - `post_deliveries (status, updated_at)` partial, where `status IN ('queued','sending')`, for the sweeper
+- `post_deliveries (publication_id, updated_at)` partial for daily send budgets
+- `post_deliveries (publication_id, subscription_id, post_id, send_month)` partial for pending preference changes
 - `outbox_events (id)` partial, where `published_at IS NULL`
 
 ### Tables outside the diagram (no foreign keys, by design)
 - **outbox_events:** `id bigserial`, `event_type`, `payload jsonb`, `created_at`, `published_at` (null until relayed).
+- **scheduler_state:** one durable cursor row for round-robin publication selection. Locking this row serializes scheduler ticks without a Redis lease.
 - **webhook_events:** `id`, `provider`, `provider_event_id`, `type`, `payload jsonb`, `received_at`, `processed_at`, `status`. Unique on `(provider, provider_event_id)`.
 - **sessions:** `id` (hash of the session token), `user_id`, `created_at`, `expires_at`, `last_seen_at`.
 - **auth_tokens:** `id`, `user_id`, `purpose` (verify email, reset password), `token_hash`, `expires_at`, `used_at`.
 
 ### Notes
-- **Partitioning:** `post_deliveries` is partitioned monthly by `send_month`, which is derived from the post's publish time and therefore identical for every row of a post. Postgres requires the partition key inside a unique key, so this keeps the primary key a true per-email idempotency key. About 90 days stay hot. A partition maintenance utility pre-creates the next 3 months, provisions a `DEFAULT` partition (`post_deliveries_default`) as a safety net, and runs a startup check/alert so a missing partition can never cause fan-out batch inserts to fail.
+- **Partitioning:** `post_deliveries` is partitioned monthly by `send_month`, copied from the post's immutable `delivery_month` fixed in the publish transaction. It is identical for every recipient of a post and never changes when slot or timezone changes. This keeps `(post_id, subscription_id, send_month)` a true idempotency key under fan-out replay. Partition maintenance pre-creates the current and next three months and keeps `post_deliveries_default` as a safety net. If a missing month accumulated rows in the default partition, maintenance moves those rows under an exclusive parent-table lock before attaching the month. Workers verify current and next-month partitions at startup, so an overdue partition stops delivery work until maintenance completes.
 - **Why `post_contents` is separate:** list queries never load large bodies, and the paid body is isolated so it cannot leak through a "select everything" query.
-- **Why `subscriptions` is separate from `users`:** a free reader needs only an email. An account links later through `user_id`.
+- **Why `subscriptions` is separate from `users`:** a free reader needs only a confirmed email. Account linking is a later phase.
 - **Counters:** `subscriber_count` is updated in the same transaction as the status change, so there is no `COUNT(*)` on large tables.
 
 ### ClickHouse
@@ -476,9 +483,11 @@ erDiagram
 | `POST /public/:subdomain/subscribe` | Email, slot, timezone. Always 202 |
 | `POST /subscriptions/confirm` | Double opt-in token |
 | `POST /unsubscribe/:token` | One-click unsubscribe (also the `List-Unsubscribe-Post` target) |
+| `GET /subscribe-demo` | Phase 2 plain HTML verification page |
+| `GET`, `POST /subscriptions/preferences/:token` | Change an active subscription's slot and timezone |
 | `POST /public/:subdomain/posts/:slug/quote-cards` | Create a quote card, 422 if the quote is not in the post |
 
-**Reader, account and billing:** `GET /me/subscriptions`, `PATCH /me/subscriptions/:id` (slot, timezone), `POST /public/:subdomain/checkout`, `POST /me/subscriptions/:id/cancel`. After checkout the UI polls `GET /me/subscriptions`, because the webhook is the source of truth for payment state.
+**Reader, account and billing (planned):** `GET /me/subscriptions`, `POST /public/:subdomain/checkout`, `POST /me/subscriptions/:id/cancel`. After checkout the UI polls `GET /me/subscriptions`, because the webhook is the source of truth for payment state.
 
 **Tracking endpoints** (root paths, run as a separate process from the main API using the same codebase, different entrypoint, so pixel spikes never degrade API latency): `GET /t/o/:token.gif` (open pixel), `GET /t/c/:token` (click, 302 to a stored URL).
 

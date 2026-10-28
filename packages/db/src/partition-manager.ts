@@ -10,7 +10,10 @@ export interface PartitionVerificationResult {
  * Returns formatted start and end dates for a month in UTC.
  * Month is 0-indexed (0 = Jan, 11 = Dec).
  */
-function getMonthRange(year: number, monthIndex: number): { start: string; end: string; partitionSuffix: string } {
+function getMonthRange(
+  year: number,
+  monthIndex: number,
+): { start: string; end: string; partitionSuffix: string } {
   const startDate = new Date(Date.UTC(year, monthIndex, 1));
   const endDate = new Date(Date.UTC(year, monthIndex + 1, 1));
 
@@ -59,9 +62,51 @@ export async function ensurePostDeliveriesPartitions(pool: pg.Pool): Promise<str
     const { start, end, partitionSuffix } = getMonthRange(targetYear, normalizedMonth);
     const tableName = `post_deliveries_${partitionSuffix}`;
 
-    await pool.query(
-      `CREATE TABLE IF NOT EXISTS ${tableName} PARTITION OF post_deliveries FOR VALUES FROM ('${start}') TO ('${end}');`,
-    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // A missing month can receive rows in DEFAULT. Move them before ATTACH,
+      // because PostgreSQL refuses a new range while DEFAULT overlaps it.
+      await client.query('LOCK TABLE post_deliveries IN ACCESS EXCLUSIVE MODE');
+      const attached = await client.query<{ attached: boolean }>(
+        `SELECT EXISTS (
+          SELECT 1 FROM pg_inherits WHERE inhparent='post_deliveries'::regclass AND inhrelid=to_regclass($1)
+        ) AS attached`,
+        [tableName],
+      );
+      if (!attached.rows[0]?.attached) {
+        const overlap = await client.query(
+          'SELECT 1 FROM post_deliveries_default WHERE send_month >= $1::date AND send_month < $2::date LIMIT 1',
+          [start, end],
+        );
+        if (overlap.rowCount) {
+          await client.query(
+            `CREATE TABLE IF NOT EXISTS ${tableName} (LIKE post_deliveries INCLUDING ALL)`,
+          );
+          await client.query(
+            `INSERT INTO ${tableName} SELECT * FROM post_deliveries_default WHERE send_month >= $1::date AND send_month < $2::date`,
+            [start, end],
+          );
+          await client.query(
+            'DELETE FROM post_deliveries_default WHERE send_month >= $1::date AND send_month < $2::date',
+            [start, end],
+          );
+          await client.query(
+            `ALTER TABLE post_deliveries ATTACH PARTITION ${tableName} FOR VALUES FROM ('${start}') TO ('${end}')`,
+          );
+        } else {
+          await client.query(
+            `CREATE TABLE IF NOT EXISTS ${tableName} PARTITION OF post_deliveries FOR VALUES FROM ('${start}') TO ('${end}')`,
+          );
+        }
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
     created.push(tableName);
   }
 
@@ -72,7 +117,9 @@ export async function ensurePostDeliveriesPartitions(pool: pg.Pool): Promise<str
  * Verifies that partitions covering current and upcoming month exist.
  * Used during application startup to alert if partition maintenance fell behind.
  */
-export async function verifyPostDeliveriesPartitions(pool: pg.Pool): Promise<PartitionVerificationResult> {
+export async function verifyPostDeliveriesPartitions(
+  pool: pg.Pool,
+): Promise<PartitionVerificationResult> {
   const tableCheck = await pool.query(
     `SELECT to_regclass('public.post_deliveries') as parent_table;`,
   );
@@ -96,10 +143,9 @@ export async function verifyPostDeliveriesPartitions(pool: pg.Pool): Promise<Par
     const tableName = `post_deliveries_${partitionSuffix}`;
     checkedMonths.push(tableName);
 
-    const check = await pool.query(
-      `SELECT to_regclass($1) as partition_table;`,
-      [`public.${tableName}`],
-    );
+    const check = await pool.query(`SELECT to_regclass($1) as partition_table;`, [
+      `public.${tableName}`,
+    ]);
 
     if (!check.rows[0]?.partition_table) {
       missingPartitions.push(tableName);
