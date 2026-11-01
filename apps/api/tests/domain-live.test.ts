@@ -6,7 +6,7 @@ import { createServer } from '../src/server.js';
 
 const databaseUrl =
   process.env.DATABASE_URL ?? 'postgres://vichaar:vichaar_pass@localhost:5432/vichaar';
-const container = createContainer({ databaseUrl });
+const container = createContainer({ databaseUrl, rateLimitNamespace: randomUUID() });
 const app = createServer(container);
 afterAll(async () => {
   await container.close();
@@ -147,7 +147,7 @@ describe('Phase 1B live domain flow', () => {
   });
 
   it('uses the same error for unknown users and wrong passwords, and invalidates logout sessions', async () => {
-    const authContainer = createContainer({ databaseUrl });
+    const authContainer = createContainer({ databaseUrl, rateLimitNamespace: randomUUID() });
     const authApp = createServer(authContainer);
     const email = `login-${randomUUID()}@example.test`;
     const signup = await request(authApp)

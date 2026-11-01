@@ -9,7 +9,7 @@ import { createDeliveryRepository } from '../../workers/src/delivery-repository.
 const databaseUrl =
   process.env.DATABASE_URL ?? 'postgres://vichaar:vichaar_pass@localhost:5432/vichaar';
 const secret = process.env.TOKEN_HMAC_SECRET ?? 'local_development_hmac_secret_32chars_min!';
-const container = createContainer({ databaseUrl });
+const container = createContainer({ databaseUrl, rateLimitNamespace: randomUUID() });
 const app = createServer(container);
 afterAll(async () => {
   await container.close();

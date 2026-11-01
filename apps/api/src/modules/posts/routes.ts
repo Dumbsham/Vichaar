@@ -69,16 +69,27 @@ export function createPostRouter({
         ),
       );
   });
+  router.post<{ pubId: string; postId: string }>('/:postId/unpublish', async (req, res) => {
+    const user = await authService.authenticate(req.cookies?.vichaar_session);
+    res.json(await postService.unpublish(uuid.parse(req.params['pubId']), user.id, uuid.parse(req.params.postId)));
+  });
   return router;
 }
-export function createPublicPostRouter({ postService }: { postService: PostService }): Router {
+export function createPublicPostRouter({ postService }: { postService: Pick<PostService, 'publicPreview' | 'publicFull'> }): Router {
   const router = Router({ mergeParams: true });
+  router.get<{ subdomain: string; slug: string }>('/posts/:slug/full', async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json(await postService.publicFull(
+      subdomain.parse(req.params['subdomain']), postSlugSchema.parse(req.params.slug),
+    ));
+  });
   router.get<{ subdomain: string; slug: string }>('/posts/:slug', async (req, res) => {
     const result = await postService.publicPreview(
       subdomain.parse(req.params['subdomain']),
       postSlugSchema.parse(req.params.slug),
     );
-    res.setHeader('ETag', `"${z.object({ version: z.number() }).parse(result).version}"`);
+    res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=300');
+    res.setHeader('ETag', `"${result.id}-${result.version}"`);
     res.json(result);
   });
   return router;

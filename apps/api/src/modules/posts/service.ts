@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import sanitizeHtml from 'sanitize-html';
 import type { Clock } from '@vichaar/shared/clock';
+import { previewCacheKey, type PreviewCache, type PublicPreview } from './cache-types.js';
 import {
+  AppError,
   ConflictError,
   NotFoundError,
   SendingPausedError,
@@ -112,6 +114,7 @@ export interface PostService {
     postId: string,
     input: UpdatePostInput,
   ): Promise<ReturnType<typeof postView>>;
+  unpublish(publicationId: string, ownerId: string, postId: string): Promise<ReturnType<typeof postView>>;
   publish(
     publicationId: string,
     ownerId: string,
@@ -119,16 +122,19 @@ export interface PostService {
     input: PublishPostInput,
     correlationId: string,
   ): Promise<ReturnType<typeof postView>>;
-  publicPreview(subdomain: string, slug: string): Promise<object>;
+  publicPreview(subdomain: string, slug: string): Promise<PublicPreview>;
+  publicFull(subdomain: string, slug: string): Promise<{ htmlFull: string }>;
 }
 export function createPostService({
   postRepo,
   publicationService,
   clock,
+  previewCache,
 }: {
   postRepo: PostRepository;
   publicationService: PublicationService;
   clock: Clock;
+  previewCache: PreviewCache;
 }): PostService {
   return {
     async create(publicationId, ownerId, input) {
@@ -160,13 +166,21 @@ export function createPostService({
       };
     },
     async update(publicationId, ownerId, postId, input) {
-      await publicationService.getOwned(publicationId, ownerId);
+      const publication = await publicationService.getOwned(publicationId, ownerId);
       const row = await postRepo.update(publicationId, postId, input);
       if (!row) {
         const existing = await postRepo.find(publicationId, postId);
         if (!existing) throw new NotFoundError();
         throw new VersionConflictError();
       }
+      await previewCache.invalidate(previewCacheKey(publication.subdomain, row.slug));
+      return postView(row);
+    },
+    async unpublish(publicationId, ownerId, postId) {
+      const publication = await publicationService.getOwned(publicationId, ownerId);
+      const row = await postRepo.unpublish(publicationId, postId);
+      if (!row) throw new NotFoundError();
+      await previewCache.invalidate(previewCacheKey(publication.subdomain, row.slug));
       return postView(row);
     },
     async publish(publicationId, ownerId, postId, input, correlationId) {
@@ -197,13 +211,26 @@ export function createPostService({
         correlationId,
       });
       if (!result) throw new VersionConflictError();
+      await previewCache.invalidate(previewCacheKey(publication.subdomain, result.row.slug));
       return postView(result.row);
     },
-    async publicPreview(subdomain, slug) {
+    async publicFull(subdomain, slug) {
       const publication = await publicationService.getBySubdomain(subdomain);
-      const row = await postRepo.findPublic(publication.id, slug);
-      if (!row) throw new NotFoundError();
-      return { ...postView(row), htmlPreview: row.html_preview ?? '' };
+      const publicRow = await postRepo.findPublic(publication.id, slug);
+      if (!publicRow) throw new NotFoundError();
+      if (publicRow.access === 'paid')
+        throw new AppError('Paid access is not available yet', 503, 'ENTITLEMENT_UNAVAILABLE');
+      const row = await postRepo.find(publication.id, publicRow.id);
+      if (!row || row.status !== 'published') throw new NotFoundError();
+      return { htmlFull: row.html_full ?? '' };
+    },
+    async publicPreview(subdomain, slug) {
+      return previewCache.getOrLoad(previewCacheKey(subdomain, slug), async () => {
+        const publication = await publicationService.getBySubdomain(subdomain);
+        const row = await postRepo.findPublic(publication.id, slug);
+        if (!row) throw new NotFoundError();
+        return { ...postView(row), status: 'published', htmlPreview: row.html_preview ?? '' };
+      });
     },
   };
 }

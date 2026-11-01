@@ -27,7 +27,7 @@ export interface PublicationRepository {
     input: UpdatePublicationInput,
   ): Promise<PublicationRow | null>;
 }
-export function createPublicationRepository({ pool }: { pool: Pool }): PublicationRepository {
+export function createPublicationRepository({ pool, readPool = pool }: { pool: Pool; readPool?: Pool }): PublicationRepository {
   return {
     async create(ownerId, input) {
       const result = await pool.query<PublicationRow>(
@@ -53,10 +53,10 @@ export function createPublicationRepository({ pool }: { pool: Pool }): Publicati
       return result.rows[0] ?? null;
     },
     async findBySubdomain(subdomain) {
-      const result = await pool.query<PublicationRow>(
-        'SELECT * FROM publications WHERE subdomain=$1',
-        [subdomain],
-      );
+      const sql = 'SELECT * FROM publications WHERE subdomain=$1';
+      let result;
+      try { result = await readPool.query<PublicationRow>(sql, [subdomain]); }
+      catch { result = await pool.query<PublicationRow>(sql, [subdomain]); }
       return result.rows[0] ?? null;
     },
     async listOwned(ownerId, cursor, limit) {

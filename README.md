@@ -76,11 +76,11 @@ REDIS_TEST_URL=redis://localhost:6379 pnpm test
 
 ## Design direction
 
-Vichaar is a modular monolith with separate delivery workers. PostgreSQL holds durable state; Redis is for rate limits. Domain changes are recorded in a transactional outbox and relayed through an SQS-compatible queue. The implemented delivery flow is outbox relay → subscriber fan-out → slot scheduler → sender, with an atomic delivery claim before an email is sent. Ambiguous send outcomes are flagged rather than automatically retried. Open and click events remain planned for batched ClickHouse ingestion instead of per-event PostgreSQL writes.
+Vichaar is a modular monolith with separate delivery workers. PostgreSQL holds durable state; Redis is for rate limits and public preview caching. Domain changes are recorded in a transactional outbox and relayed through an SQS-compatible queue. The implemented delivery flow is outbox relay → subscriber fan-out → slot scheduler → sender, with an atomic delivery claim before an email is sent. Ambiguous send outcomes are flagged rather than automatically retried. Open and click events remain planned for batched ClickHouse ingestion instead of per-event PostgreSQL writes.
 
 The design targets include 500,000 recipients for one send, 1,000 emails per second, cache-first post reads, and operation on a 2 vCPU / 12 GB demo machine. These are **unverified targets**. The calculations, resource budget, and tradeoffs are in [docs/design.md](docs/design.md); measured benchmarks will be added only after real runs.
 
-The local [Compose file](infra/compose/docker-compose.yml) defines PostgreSQL, a second PostgreSQL container, Redis, ElasticMQ, ClickHouse, and Mailpit. The API and workers run as local Node processes during this phase. The second PostgreSQL container is **not configured as a streaming replica** yet. Caddy, API/web/worker containers, an OpenTelemetry collector, and the Terraform production blueprint remain future work. No live demo or production deployment is claimed here.
+The local [Compose file](infra/compose/docker-compose.yml) defines PostgreSQL, a second PostgreSQL container, Redis, ElasticMQ, ClickHouse, and Mailpit. The API and workers run as local Node processes during this phase. The second PostgreSQL container is a working streaming read replica in the local Compose stack. Caddy, API/web/worker containers, an OpenTelemetry collector, and the Terraform production blueprint remain future work. No live demo or production deployment is claimed here.
 
 ## Repository map
 
@@ -101,7 +101,7 @@ docs/              Design, flows, threat model, failure analysis, ADRs
 - [x] Phase 1A: workspace, local infrastructure, baseline migration, health API, CI
 - [x] Phase 1B: accounts, tenant-scoped publications and posts, draft versioning, safe previews, publish outbox
 - [x] Phase 2: double opt-in subscriptions and the email delivery workers
-- [ ] Phase 3: CDN/Redis read path and working read replica
+- [x] Phase 3: CDN-compatible headers, Redis public-preview cache, and working read replica
 - [ ] Phase 4: Razorpay subscriptions, webhooks, and paywall
 - [ ] Phase 5: open/click tracking and ClickHouse analytics pipeline
 - [ ] Later phases: quote cards, milestones, observability, load and chaos measurements, Next.js frontend, deployment blueprint

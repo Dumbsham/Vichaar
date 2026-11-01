@@ -9,7 +9,7 @@ export interface PostRow {
   title: string;
   language: string;
   access: 'free' | 'paid';
-  status: 'draft' | 'scheduled' | 'published';
+  status: 'draft' | 'scheduled' | 'published' | 'unpublished';
   scheduled_for: Date | null;
   published_at: Date | null;
   version: number;
@@ -31,6 +31,7 @@ export interface PostRepository {
   findPublic(publicationId: string, slug: string): Promise<PostRow | null>;
   update(publicationId: string, postId: string, input: UpdatePostInput): Promise<PostRow | null>;
   list(publicationId: string, cursor: string | undefined, limit: number): Promise<PostRow[]>;
+  unpublish(publicationId: string, postId: string): Promise<PostRow | null>;
   publish(input: {
     publicationId: string;
     postId: string;
@@ -45,7 +46,7 @@ export interface PostRepository {
     correlationId: string;
   }): Promise<PublishResult>;
 }
-export function createPostRepository({ pool }: { pool: Pool }): PostRepository {
+export function createPostRepository({ pool, readPool }: { pool: Pool; readPool: Pool }): PostRepository {
   return {
     async create(publicationId, input, slug, language) {
       const client = await pool.connect();
@@ -89,12 +90,12 @@ export function createPostRepository({ pool }: { pool: Pool }): PostRepository {
       return result.rows[0] ?? null;
     },
     async findPublic(publicationId, slug) {
-      const result = await pool.query<PostRow>(
-        `SELECT p.*, c.html_preview FROM posts p JOIN post_contents c
+      const sql = `SELECT p.*, c.html_preview FROM posts p JOIN post_contents c
          ON c.post_id=p.id AND c.publication_id=p.publication_id
-         WHERE p.publication_id=$1 AND p.slug=$2 AND p.status='published'`,
-        [publicationId, slug],
-      );
+         WHERE p.publication_id=$1 AND p.slug=$2 AND p.status='published'`;
+      let result;
+      try { result = await readPool.query<PostRow>(sql, [publicationId, slug]); }
+      catch { result = await pool.query<PostRow>(sql, [publicationId, slug]); }
       return result.rows[0] ?? null;
     },
     async update(publicationId, postId, input) {
@@ -139,6 +140,14 @@ export function createPostRepository({ pool }: { pool: Pool }): PostRepository {
         [publicationId, cursor ?? null, limit],
       );
       return result.rows;
+    },
+    async unpublish(publicationId, postId) {
+      const result = await pool.query<PostRow>(
+        `UPDATE posts SET status='unpublished', version=version+1, updated_at=now()
+         WHERE publication_id=$1 AND id=$2 AND status='published' RETURNING *`,
+        [publicationId, postId],
+      );
+      return result.rows[0] ?? null;
     },
     async publish(input) {
       const client = await pool.connect();

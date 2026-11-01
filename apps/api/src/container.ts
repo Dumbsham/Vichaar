@@ -1,6 +1,7 @@
 import { createDatabaseClients, type DatabaseClients } from '@vichaar/db';
 import { SystemClock } from '@vichaar/shared/clock';
 import { createRateLimiter, type RateLimiter } from './shared/rate-limiter.js';
+import { createPreviewCache, type PreviewCache } from './shared/cache.js';
 import {
   createHealthRepository,
   createHealthService,
@@ -31,11 +32,13 @@ export interface AppContainer {
   postService?: PostService;
   subscriptionService?: SubscriptionService;
   rateLimiter?: RateLimiter;
+  previewCache?: PreviewCache;
   close: () => Promise<void>;
 }
 export interface ContainerConfig {
   databaseUrl: string;
   databaseReplicaUrl?: string;
+  rateLimitNamespace?: string;
 }
 export function createContainer(config: ContainerConfig): AppContainer {
   if (
@@ -57,11 +60,13 @@ export function createContainer(config: ContainerConfig): AppContainer {
     clock,
   });
   const publicationService = createPublicationService({
-    publicationRepo: createPublicationRepository({ pool: db.primaryPool }),
+    publicationRepo: createPublicationRepository({ pool: db.primaryPool, readPool: db.replicaPool }),
   });
-  const rateLimiter = createRateLimiter(process.env.REDIS_URL ?? 'redis://localhost:6379');
+  const rateLimiter = createRateLimiter(process.env.REDIS_URL ?? 'redis://localhost:6379', Date.now, config.rateLimitNamespace);
+  const previewCache = createPreviewCache(process.env.REDIS_URL ?? 'redis://localhost:6379');
   const postService = createPostService({
-    postRepo: createPostRepository({ pool: db.primaryPool }),
+    postRepo: createPostRepository({ pool: db.primaryPool, readPool: db.replicaPool }),
+    previewCache,
     publicationService,
     clock,
   });
@@ -78,8 +83,10 @@ export function createContainer(config: ContainerConfig): AppContainer {
     postService,
     subscriptionService,
     rateLimiter,
+    previewCache,
     close: async () => {
       await rateLimiter.close();
+      await previewCache.close();
       await db.close();
     },
   };

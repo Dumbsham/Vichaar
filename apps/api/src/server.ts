@@ -91,6 +91,15 @@ export function createServer(container: AppContainer): Express {
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
+  app.get('/metrics', (_req, res) => {
+    const stats = container.previewCache?.stats();
+    if (!stats) { res.status(503).end(); return; }
+    res.type('text/plain; version=0.0.4').send(
+      `vichaar_preview_cache_hits_total ${stats.hits}\n` +
+      `vichaar_preview_cache_misses_total ${stats.misses}\n` +
+      `vichaar_preview_cache_redis_errors_total ${stats.redisErrors}\n`,
+    );
+  });
   app.use('/', createHealthRouter({ healthService: container.healthService }));
   const { authService, publicationService, postService, subscriptionService } = container;
   if (authService && publicationService && postService) {

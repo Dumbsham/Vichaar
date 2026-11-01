@@ -2,6 +2,10 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: vichaar-postgres
+    command: postgres -c wal_level=replica -c max_wal_senders=5 -c max_replication_slots=5
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init.sh:/docker-entrypoint-initdb.d/10-replication.sh:ro
     restart: unless-stopped
     ports:
       - "5432:5432"
@@ -22,6 +26,21 @@ services:
   postgres-replica:
     image: postgres:16-alpine
     container_name: vichaar-postgres-replica
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -s /var/lib/postgresql/data/PG_VERSION ]; then
+          until PGPASSWORD=vichaar_pass pg_basebackup -h postgres -U vichaar -D /var/lib/postgresql/data -Fp -Xs -R; do
+            rm -rf /var/lib/postgresql/data/*
+            sleep 2
+          done
+        fi
+        exec docker-entrypoint.sh postgres -c hot_standby=on
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     ports:
       - "5433:5432"
@@ -98,3 +117,7 @@ services:
       resources:
         limits:
           memory: 256M
+
+volumes:
+  postgres-data:
+  postgres-replica-data:

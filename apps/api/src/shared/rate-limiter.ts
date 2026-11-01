@@ -24,7 +24,7 @@ function timeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
   });
   return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
 }
-export function createRateLimiter(redisUrl: string, now: () => number = Date.now): RateLimiter {
+export function createRateLimiter(redisUrl: string, now: () => number = Date.now, namespace = 'auth-rate'): RateLimiter {
   let client: RedisClientType | undefined;
   let disabledUntil = 0;
   const fallback = new Map<string, { count: number; resetAt: number }>();
@@ -42,7 +42,7 @@ export function createRateLimiter(redisUrl: string, now: () => number = Date.now
   }
   return {
     async consume(key, limit, windowSeconds) {
-      const hashedKey = `auth-rate:${createHash('sha256').update(key).digest('hex')}`;
+      const hashedKey = `${namespace}:${createHash('sha256').update(key).digest('hex')}`;
       const current = now();
       if (current >= disabledUntil) {
         try {
