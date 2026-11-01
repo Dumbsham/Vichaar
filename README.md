@@ -28,7 +28,7 @@ Scheduled posts are released by the scheduler when due. There is no Next.js fron
 
 ## Run the current API locally
 
-**Requirements:** Node.js 20, pnpm 9, and Docker with Compose.
+**Requirements:** Node.js 22.12 or newer, pnpm 9, and Docker with Compose.
 
 ```bash
 git clone https://github.com/Dumbsham/Vichaar.git
