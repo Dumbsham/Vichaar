@@ -22,6 +22,7 @@ const queues = createSqsQueues({
   region: 'us-east-1',
   eventsName: `phase2-events-${databaseName.slice(-12)}`,
   sendsName: `phase2-sends-${databaseName.slice(-12)}`,
+  hooksName: `phase2-hooks-${databaseName.slice(-12)}`,
 });
 const limiter = createRateLimiter(process.env.REDIS_URL ?? 'redis://localhost:6379');
 let container: AppContainer;

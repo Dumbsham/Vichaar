@@ -64,6 +64,7 @@ describe('kill-sender chaos', () => {
       region: 'us-east-1',
       eventsName: `chaos-events-${queueSuffix}`,
       sendsName: `chaos-sends-${queueSuffix}`,
+      hooksName: `chaos-hooks-${queueSuffix}`,
     });
     const keys = (await repo.queueDue()).filter((key) => key.postId === postId);
     expect(keys).toHaveLength(1);

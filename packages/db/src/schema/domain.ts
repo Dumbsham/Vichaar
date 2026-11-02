@@ -210,3 +210,68 @@ export const postDeliveries = pgTable(
       .where(sql`${table.status} IN ('queued','sending')`),
   ],
 );
+
+export const billingPlans = pgTable(
+  'billing_plans',
+  {
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    pricePaise: integer('price_paise').notNull(),
+    razorpayPlanId: text('razorpay_plan_id').notNull(),
+    createdAt: utc('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.pricePaise] }),
+    uniqueIndex('billing_plans_razorpay_id_unique').on(table.razorpayPlanId),
+  ],
+);
+export const paidSubscriptions = pgTable(
+  'paid_subscriptions',
+  {
+    id: uuid('id').primaryKey(),
+    publicationId: uuid('publication_id')
+      .notNull()
+      .references(() => publications.id),
+    subscriptionId: uuid('subscription_id')
+      .notNull()
+      .references(() => subscriptions.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    razorpaySubscriptionId: text('razorpay_subscription_id').notNull().unique(),
+    status: text('status').notNull().default('created'),
+    pricePaise: integer('price_paise').notNull(),
+    currentPeriodEnd: utc('current_period_end'),
+    lastEventAt: utc('last_event_at'),
+    createdAt: utc('created_at').notNull().defaultNow(),
+    updatedAt: utc('updated_at').notNull().defaultNow(),
+  },
+  (table) => [
+    index('paid_subscriptions_subscription_history_idx').on(
+      table.publicationId,
+      table.subscriptionId,
+      table.createdAt,
+    ),
+    uniqueIndex('paid_subscriptions_open_unique')
+      .on(table.publicationId, table.subscriptionId)
+      .where(sql`${table.status} IN ('created','active','halted')`),
+    index('paid_subscriptions_user_pub_idx').on(table.userId, table.publicationId),
+  ],
+);
+export const webhookEvents = pgTable(
+  'webhook_events',
+  {
+    id: uuid('id').primaryKey(),
+    provider: text('provider').notNull(),
+    providerEventId: text('provider_event_id').notNull(),
+    type: text('type').notNull(),
+    payload: jsonb('payload').notNull(),
+    status: text('status').notNull().default('pending'),
+    receivedAt: utc('received_at').notNull().defaultNow(),
+    processedAt: utc('processed_at'),
+  },
+  (table) => [
+    uniqueIndex('webhook_events_provider_event_unique').on(table.provider, table.providerEventId),
+  ],
+);

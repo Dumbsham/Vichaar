@@ -11,7 +11,7 @@
 
 </div>
 
-> **Current status:** Phase 2 is implemented locally: double opt-in subscriptions and the outbox-to-email delivery pipeline. The reader-facing Next.js app, billing, tracking ingestion, and deployment containers are later phases. The scale numbers below remain unmeasured design goals.
+> **Current status:** Phases 1–4 are implemented locally, including read caching and test-mode billing. Razorpay requests need your own test keys; automated tests use a stub provider. The Next.js app, tracking ingestion, and deployment containers are later phases. The scale numbers below remain unmeasured design goals.
 
 ## What works today
 
@@ -22,9 +22,10 @@
 - **Public previews:** A published post can be read by subdomain and slug. A paid post's full body is not returned by this public endpoint.
 - **Project foundation:** The pnpm workspace, strict TypeScript, module-boundary lint rule, PostgreSQL migrations, health checks, local Compose dependencies, and CI are in place.
 - **Subscriptions:** Readers request a confirmation email without exposing whether an address is already subscribed. Signed links confirm once; signed unsubscribe links add a suppression and stop pending sends. Readers can change slot and timezone while deliveries remain pending. `/subscribe-demo` is a plain HTML verification page.
-- **Delivery:** Five separately run workers relay outbox events through ElasticMQ, fan out active subscribers in pages, claim due rows fairly with a daily publication cap, send through a stub, Mailpit SMTP, or SES sandbox provider, and sweep stale rows. A sender claims a row before calling the provider; ambiguous outcomes are flagged and never automatically retried. Monthly partitions and a default partition hold the delivery ledger.
+- **Delivery:** Five delivery worker roles relay outbox events through ElasticMQ, fan out active subscribers in pages, claim due rows fairly with a daily publication cap, send through a stub, Mailpit SMTP, or SES sandbox provider, and sweep stale rows. A sender claims a row before calling the provider; ambiguous outcomes are flagged and never automatically retried. Monthly partitions and a default partition hold the delivery ledger.
+- **Paid access:** Logged-in, confirmed newsletter readers can start a Razorpay test-mode subscription. Signed webhooks enter a durable inbox and the hooks queue; a worker applies them once and rejects stale events. Paid bodies require a database-backed entitlement with a 60-second Redis cache. A separate hourly worker reconciles missed payment events. Cancellation and subscription status endpoints are available.
 
-Scheduled posts are released by the scheduler when due. There is no Next.js frontend, checkout, paywall, or analytics endpoint yet. Email links are sent directly; open and click tracking are Phase 5 work.
+Scheduled posts are released by the scheduler when due. There is no Next.js frontend or analytics endpoint yet. Email links are sent directly; open and click tracking are Phase 5 work.
 
 ## Run the current API locally
 
@@ -39,9 +40,17 @@ pnpm db:migrate
 pnpm dev
 ```
 
-The API listens on `http://localhost:4000`. `pnpm dev` also starts the five worker roles as separate processes. Check `GET /healthz` for process health and `GET /readyz` for PostgreSQL connectivity. `pnpm db:seed` currently checks the baseline migration record; it does not create sample writers or posts.
+The API listens on `http://localhost:4000`. `pnpm dev` starts seven worker roles as separate processes, including webhooks and hourly reconciliation. Check `GET /healthz` for process health and `GET /readyz` for PostgreSQL connectivity. `pnpm db:seed` currently checks the baseline migration record; it does not create sample writers or posts.
 
 The workers need local SQS credentials exported, such as `AWS_ACCESS_KEY_ID=test` and `AWS_SECRET_ACCESS_KEY=test`. [`.env.example`](.env.example) documents the remaining configuration. Scripts do not automatically load `.env`; export variables or provide them through your process manager. The local defaults target Compose. `TRUST_PROXY` should be set only to a known reverse proxy address or CIDR when deploying behind one.
+
+### Razorpay test-mode setup
+
+1. In the Razorpay dashboard, switch to **Test Mode** and create API keys. Export `RAZORPAY_KEY_ID` (`rzp_test_...`) and `RAZORPAY_KEY_SECRET` in the API and worker environments. The API refuses live-mode keys.
+2. Create a **separate** webhook secret (at least 32 characters), export it as `RAZORPAY_WEBHOOK_SECRET` in the API environment, and configure the same secret for the test-mode webhook. Subscribe to subscription lifecycle events and point the webhook to `POST /webhooks/razorpay` on a reachable HTTPS URL. A local-only `localhost` URL cannot receive Razorpay's remote webhook.
+3. A writer sets `monthlyPricePaise` on their publication. A reader creates an account with their newsletter email, confirms that newsletter subscription, then calls `POST /public/:subdomain/checkout` while signed in. The response provides the Razorpay test key ID and subscription ID for a future browser checkout UI. `GET /me/subscriptions?publicationId=:id` shows processing or active status. The browser payment callback never unlocks content; only a verified webhook or reconciliation does.
+
+No real charge or live payment is supported. Automated webhook tests use signed synthetic events and a stub provider, so they run without Razorpay credentials. The account-email verification and remote-create crash gap in [ADR-012](docs/adr/012_billingWebhookInbox.md) must be closed before any live-payment launch.
 
 ### API routes available now
 
@@ -60,6 +69,11 @@ The workers need local SQS credentials exported, such as `AWS_ACCESS_KEY_ID=test
 | `GET`, `POST`  | `/unsubscribe/:token`                         | Show and submit unsubscribe                        |
 | `GET`, `POST`  | `/subscriptions/preferences/:token`           | Change a reader's slot and timezone                |
 | `GET`, `POST`  | `/subscribe-demo`                             | Plain HTML subscribe/confirmation page             |
+| `POST`        | `/public/:subdomain/checkout`                 | Create a test-mode Razorpay subscription           |
+| `POST`        | `/webhooks/razorpay`                          | Receive a signed payment event                     |
+| `GET`         | `/me/subscriptions?publicationId=:id`         | Read paid subscription status for one publication  |
+| `POST`        | `/me/subscriptions/:id/cancel`                | Cancel at period end; body has `publicationId`     |
+| `GET`         | `/public/:subdomain/posts/:slug/full`         | Read a full post, with paid access checked         |
 
 For request shapes, see the [shared Zod schemas](packages/shared/src/schemas/) and the [Phase 1B plan](docs/MasterPlan.md#phase-1b-domain-foundation-auth-tenant-scoping-publications--posts).
 
@@ -72,7 +86,7 @@ pnpm lint
 REDIS_TEST_URL=redis://localhost:6379 pnpm test
 ```
 
-`pnpm lint` runs ESLint and TypeScript checks. `pnpm test` runs Vitest, including API and pipeline tests against real PostgreSQL, Redis, and ElasticMQ with a stub email provider. The kill-sender chaos test uses an isolated local ElasticMQ queue. Setting `REDIS_TEST_URL` also runs the shared Redis rate-limit test. Run `pnpm db:migrate` first. Test counts can change as the project grows.
+`pnpm lint` runs ESLint and TypeScript checks. `pnpm test` runs Vitest, including API, delivery, and webhook chaos tests against real PostgreSQL, Redis, and ElasticMQ with stub email and Razorpay providers. Chaos tests use isolated local queues. Setting `REDIS_TEST_URL` also runs the shared Redis rate-limit test. Run `pnpm db:migrate` first. Test counts can change as the project grows.
 
 ## Design direction
 
@@ -102,7 +116,7 @@ docs/              Design, flows, threat model, failure analysis, ADRs
 - [x] Phase 1B: accounts, tenant-scoped publications and posts, draft versioning, safe previews, publish outbox
 - [x] Phase 2: double opt-in subscriptions and the email delivery workers
 - [x] Phase 3: CDN-compatible headers, Redis public-preview cache, and working read replica
-- [ ] Phase 4: Razorpay subscriptions, webhooks, and paywall
+- [x] Phase 4: Razorpay test-mode subscriptions, webhooks, and paywall
 - [ ] Phase 5: open/click tracking and ClickHouse analytics pipeline
 - [ ] Later phases: quote cards, milestones, observability, load and chaos measurements, Next.js frontend, deployment blueprint
 

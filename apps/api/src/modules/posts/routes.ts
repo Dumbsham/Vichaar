@@ -71,17 +71,37 @@ export function createPostRouter({
   });
   router.post<{ pubId: string; postId: string }>('/:postId/unpublish', async (req, res) => {
     const user = await authService.authenticate(req.cookies?.vichaar_session);
-    res.json(await postService.unpublish(uuid.parse(req.params['pubId']), user.id, uuid.parse(req.params.postId)));
+    res.json(
+      await postService.unpublish(
+        uuid.parse(req.params['pubId']),
+        user.id,
+        uuid.parse(req.params.postId),
+      ),
+    );
   });
   return router;
 }
-export function createPublicPostRouter({ postService }: { postService: Pick<PostService, 'publicPreview' | 'publicFull'> }): Router {
+export function createPublicPostRouter({
+  postService,
+  authService,
+}: {
+  postService: Pick<PostService, 'publicPreview' | 'publicFull'>;
+  authService?: AuthService;
+}): Router {
   const router = Router({ mergeParams: true });
   router.get<{ subdomain: string; slug: string }>('/posts/:slug/full', async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
-    res.json(await postService.publicFull(
-      subdomain.parse(req.params['subdomain']), postSlugSchema.parse(req.params.slug),
-    ));
+    const user =
+      req.cookies?.vichaar_session && authService
+        ? await authService.authenticate(req.cookies.vichaar_session)
+        : undefined;
+    res.json(
+      await postService.publicFull(
+        subdomain.parse(req.params['subdomain']),
+        postSlugSchema.parse(req.params.slug),
+        user?.id,
+      ),
+    );
   });
   router.get<{ subdomain: string; slug: string }>('/posts/:slug', async (req, res) => {
     const result = await postService.publicPreview(

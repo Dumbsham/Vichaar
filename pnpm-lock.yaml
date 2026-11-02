@@ -17,12 +17,27 @@ importers:
       '@types/node':
         specifier: ^20.11.1
         version: 20.19.43
+      '@types/supertest':
+        specifier: ^6.0.2
+        version: 6.0.3
+      '@vichaar/queue':
+        specifier: workspace:*
+        version: link:packages/queue
+      '@vichaar/shared':
+        specifier: workspace:*
+        version: link:packages/shared
       eslint:
         specifier: ^9.15.0
         version: 9.39.5
       prettier:
         specifier: ^3.3.3
         version: 3.9.10
+      redis:
+        specifier: '5'
+        version: 5.12.1(@opentelemetry/api@1.10.0)
+      supertest:
+        specifier: ^7.0.0
+        version: 7.3.1
       tsx:
         specifier: ^4.19.2
         version: 4.23.15
@@ -41,9 +56,21 @@ importers:
 
   apps/api:
     dependencies:
+      '@opentelemetry/api':
+        specifier: 1.9.0
+        version: 1.9.0
+      '@opentelemetry/exporter-trace-otlp-http':
+        specifier: ^0.223.0
+        version: 0.223.0(@opentelemetry/api@1.9.0)
+      '@opentelemetry/sdk-trace-node':
+        specifier: ^2.12.0
+        version: 2.12.0(@opentelemetry/api@1.9.0)
       '@vichaar/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@vichaar/queue':
+        specifier: workspace:*
+        version: link:../../packages/queue
       '@vichaar/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -70,7 +97,7 @@ importers:
         version: 10.5.0
       redis:
         specifier: '5'
-        version: 5.12.1(@opentelemetry/api@1.10.0)
+        version: 5.12.1(@opentelemetry/api@1.9.0)
       sanitize-html:
         specifier: 2.18.1
         version: 2.18.1
@@ -3126,9 +3153,10 @@ snapshots:
 
   '@opentelemetry/api-logs@0.223.0':
     dependencies:
-      '@opentelemetry/api': 1.10.0
+      '@opentelemetry/api': 1.9.0
 
-  '@opentelemetry/api@1.10.0': {}
+  '@opentelemetry/api@1.10.0':
+    optional: true
 
   '@opentelemetry/api@1.9.0': {}
 
@@ -3225,6 +3253,12 @@ snapshots:
       cluster-key-slot: 1.1.2
     optionalDependencies:
       '@opentelemetry/api': 1.10.0
+
+  '@redis/client@5.12.1(@opentelemetry/api@1.9.0)':
+    dependencies:
+      cluster-key-slot: 1.1.2
+    optionalDependencies:
+      '@opentelemetry/api': 1.9.0
 
   '@redis/json@5.12.1(@redis/client@5.12.1(@opentelemetry/api@1.10.0))':
     dependencies:
@@ -4430,6 +4464,17 @@ snapshots:
     dependencies:
       '@redis/bloom': 5.12.1(@redis/client@5.12.1(@opentelemetry/api@1.10.0))
       '@redis/client': 5.12.1(@opentelemetry/api@1.10.0)
+      '@redis/json': 5.12.1(@redis/client@5.12.1(@opentelemetry/api@1.10.0))
+      '@redis/search': 5.12.1(@redis/client@5.12.1(@opentelemetry/api@1.10.0))
+      '@redis/time-series': 5.12.1(@redis/client@5.12.1(@opentelemetry/api@1.10.0))
+    transitivePeerDependencies:
+      - '@node-rs/xxhash'
+      - '@opentelemetry/api'
+
+  redis@5.12.1(@opentelemetry/api@1.9.0):
+    dependencies:
+      '@redis/bloom': 5.12.1(@redis/client@5.12.1(@opentelemetry/api@1.10.0))
+      '@redis/client': 5.12.1(@opentelemetry/api@1.9.0)
       '@redis/json': 5.12.1(@redis/client@5.12.1(@opentelemetry/api@1.10.0))
       '@redis/search': 5.12.1(@redis/client@5.12.1(@opentelemetry/api@1.10.0))
       '@redis/time-series': 5.12.1(@redis/client@5.12.1(@opentelemetry/api@1.10.0))

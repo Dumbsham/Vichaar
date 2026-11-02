@@ -6,6 +6,7 @@ import { createEmailProvider } from './provider.js';
 import { createPipeline } from './pipeline.js';
 import { createWorkerMetrics } from './metrics.js';
 import { startTracing } from './tracing.js';
+import { createBillingPipeline } from './billing.js';
 
 export interface WorkerConfig {
   production: boolean;
@@ -21,7 +22,9 @@ export interface WorkerConfig {
   smtpHost: string;
   smtpPort: number;
   verifiedAddresses: string[];
-  role: 'relay' | 'fanout' | 'scheduler' | 'sender' | 'sweeper';
+  role: 'relay' | 'fanout' | 'scheduler' | 'sender' | 'sweeper' | 'webhooks' | 'reconciliation';
+  razorpayKeyId?: string;
+  razorpayKeySecret?: string;
   metricsBasePort: number;
   otlpEndpoint?: string;
 }
@@ -41,7 +44,9 @@ export function createWorkerContainer(config: WorkerConfig) {
   const metrics = createWorkerMetrics(
     config.role,
     config.metricsBasePort +
-      ['relay', 'fanout', 'scheduler', 'sender', 'sweeper'].indexOf(config.role),
+      ['relay', 'fanout', 'scheduler', 'sender', 'sweeper', 'webhooks', 'reconciliation'].indexOf(
+        config.role,
+      ),
   );
   const database = createDatabaseClients({ primaryUrl: config.databaseUrl, maxConnections: 3 });
   const queues = createSqsQueues({
@@ -69,15 +74,24 @@ export function createWorkerContainer(config: WorkerConfig) {
     fromAddress: config.emailFrom,
     metrics,
   });
+  const billing = createBillingPipeline({
+    pool: database.primaryPool,
+    hooks: queues.hooks,
+    redisUrl: config.redisUrl,
+    keyId: config.razorpayKeyId,
+    keySecret: config.razorpayKeySecret,
+  });
   return {
     database,
     queues,
     metrics,
     pipeline,
+    billing,
     async close() {
       await Promise.all([
         database.close(),
         rateLimiter.close(),
+        billing.close(),
         provider.close(),
         metrics.close(),
         tracing.shutdown(),

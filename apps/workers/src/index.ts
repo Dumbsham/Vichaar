@@ -19,7 +19,17 @@ const config = z
     MAILPIT_SMTP_HOST: z.string().default('localhost'),
     MAILPIT_SMTP_PORT: z.coerce.number().int().positive().default(1025),
     SES_VERIFIED_ADDRESSES: z.string().default(''),
-    WORKER_ROLE: z.enum(['relay', 'fanout', 'scheduler', 'sender', 'sweeper']),
+    RAZORPAY_KEY_ID: z.string().optional(),
+    RAZORPAY_KEY_SECRET: z.string().optional(),
+    WORKER_ROLE: z.enum([
+      'relay',
+      'fanout',
+      'scheduler',
+      'sender',
+      'sweeper',
+      'webhooks',
+      'reconciliation',
+    ]),
     OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess(
       (value) => (value === '' ? undefined : value),
       z.string().url().optional(),
@@ -50,16 +60,20 @@ const worker = createWorkerContainer({
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean),
   role: config.WORKER_ROLE,
+  razorpayKeyId: config.RAZORPAY_KEY_ID,
+  razorpayKeySecret: config.RAZORPAY_KEY_SECRET,
   metricsBasePort: config.METRICS_BASE_PORT,
   otlpEndpoint: config.OTEL_EXPORTER_OTLP_ENDPOINT,
 });
-const { database, queues, metrics, pipeline } = worker;
+const { database, queues, metrics, pipeline, billing } = worker;
 const roles = {
-  relay: { interval: 1000, run: pipeline.relay },
+  relay: { interval: 1000, run: pipeline.relay }, // post publish hogya,queue mein daalta
   fanout: { interval: 1000, run: pipeline.fanoutOnce },
   scheduler: { interval: 15_000, run: pipeline.scheduleOnce },
   sender: { interval: 1000, run: pipeline.sendOnce },
   sweeper: { interval: 60_000, run: pipeline.sweep },
+  webhooks: { interval: 1000, run: billing.processOnce },
+  reconciliation: { interval: 3_600_000, run: billing.reconcile },
 };
 const role = roles[config.WORKER_ROLE];
 let running = true;
@@ -82,12 +96,20 @@ async function main() {
       const queueDepth =
         config.WORKER_ROLE === 'relay' || config.WORKER_ROLE === 'fanout'
           ? await queues.events.depth()
-          : await queues.sends.depth();
+          : config.WORKER_ROLE === 'webhooks'
+            ? await queues.hooks.depth()
+            : config.WORKER_ROLE === 'reconciliation'
+              ? 0
+              : await queues.sends.depth();
       metrics.setQueueDepth(queueDepth);
       metrics.increment('worker_runs_total');
       metrics.increment('worker_duration_ms_total', Date.now() - started);
-      if (typeof result === 'number') metrics.increment('worker_items_total', result);
-      else {
+      if (typeof result === 'number') {
+        metrics.increment('worker_items_total', result);
+        if (config.WORKER_ROLE === 'webhooks') metrics.increment('webhook_processed_total', result);
+        if (config.WORKER_ROLE === 'reconciliation')
+          metrics.increment('reconciliation_checked_total', result);
+      } else {
         metrics.increment('sweeper_unknown_outcome_total', result.unknown);
         metrics.increment('sweeper_requeued_total', result.requeued);
         metrics.increment('sweeper_outbox_purged_total', result.outboxPurged);

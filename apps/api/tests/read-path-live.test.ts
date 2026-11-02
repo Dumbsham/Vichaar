@@ -85,8 +85,9 @@ describe('Phase 3 live read path', () => {
     expect(cachedPaid).not.toContain('Secret paid body');
     expect(cachedPaid).not.toContain('htmlFull');
     const paidFull = await request(app).get(`${paidPath}/full`);
-    expect(paidFull.status).toBe(503);
+    expect(paidFull.status).toBe(401);
     expect(paidFull.headers['cache-control']).toBe('private, no-store');
+    expect((await request(app).get(`${paidPath}/full`).set('Cookie', ownerCookie)).status).toBe(503);
     const fallback = createContainer({ databaseUrl, databaseReplicaUrl: 'postgres://vichaar:vichaar_pass@127.0.0.1:1/vichaar' });
     try {
       const result = await fallback.publicationService!.getBySubdomain(subdomain);

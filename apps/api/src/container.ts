@@ -2,6 +2,14 @@ import { createDatabaseClients, type DatabaseClients } from '@vichaar/db';
 import { SystemClock } from '@vichaar/shared/clock';
 import { createRateLimiter, type RateLimiter } from './shared/rate-limiter.js';
 import { createPreviewCache, type PreviewCache } from './shared/cache.js';
+import { createSqsQueues } from '@vichaar/queue';
+import {
+  createBillingRepository,
+  createBillingService,
+  createRazorpayProvider,
+  type BillingProvider,
+  type BillingService,
+} from './modules/billing/index.js';
 import {
   createHealthRepository,
   createHealthService,
@@ -33,12 +41,18 @@ export interface AppContainer {
   subscriptionService?: SubscriptionService;
   rateLimiter?: RateLimiter;
   previewCache?: PreviewCache;
+  billingService?: BillingService;
+  enqueueHook?: (id: string, correlationId: string) => Promise<void>;
+  webhookSecret?: string;
   close: () => Promise<void>;
 }
 export interface ContainerConfig {
   databaseUrl: string;
   databaseReplicaUrl?: string;
   rateLimitNamespace?: string;
+  billingProvider?: BillingProvider;
+  enqueueHook?: (id: string, correlationId: string) => Promise<void>;
+  webhookSecret?: string;
 }
 export function createContainer(config: ContainerConfig): AppContainer {
   if (
@@ -60,13 +74,56 @@ export function createContainer(config: ContainerConfig): AppContainer {
     clock,
   });
   const publicationService = createPublicationService({
-    publicationRepo: createPublicationRepository({ pool: db.primaryPool, readPool: db.replicaPool }),
+    publicationRepo: createPublicationRepository({
+      pool: db.primaryPool,
+      readPool: db.replicaPool,
+    }),
   });
-  const rateLimiter = createRateLimiter(process.env.REDIS_URL ?? 'redis://localhost:6379', Date.now, config.rateLimitNamespace);
+  const billingPublicationService = createPublicationService({
+    publicationRepo: createPublicationRepository({ pool: db.primaryPool }),
+  });
+  const rateLimiter = createRateLimiter(
+    process.env.REDIS_URL ?? 'redis://localhost:6379',
+    Date.now,
+    config.rateLimitNamespace,
+  );
   const previewCache = createPreviewCache(process.env.REDIS_URL ?? 'redis://localhost:6379');
+  const provider =
+    config.billingProvider ??
+    (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_') && process.env.RAZORPAY_KEY_SECRET
+      ? createRazorpayProvider(process.env.RAZORPAY_KEY_ID, process.env.RAZORPAY_KEY_SECRET)
+      : undefined);
+  const webhookSecret = config.webhookSecret ?? process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (
+    provider &&
+    !config.billingProvider &&
+    (!webhookSecret || webhookSecret.length < 32 || webhookSecret.includes('placeholder'))
+  )
+    throw new Error('A distinct Razorpay webhook secret of at least 32 characters is required');
+  const billingService = provider
+    ? createBillingService({
+        repo: createBillingRepository(db.primaryPool, clock),
+        provider,
+        publicationService: billingPublicationService,
+        clock,
+        redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
+        keyId: process.env.RAZORPAY_KEY_ID ?? 'rzp_test_stub',
+      })
+    : undefined;
+  const hooks = createSqsQueues({
+    endpoint: process.env.SQS_ENDPOINT ?? 'http://localhost:9324',
+    baseUrl: process.env.SQS_QUEUE_BASE_URL ?? 'http://localhost:9324/queue',
+    region: process.env.AWS_REGION ?? 'us-east-1',
+  });
+  const enqueueHook =
+    config.enqueueHook ??
+    (async (id: string, correlationId: string) => {
+      await hooks.hooks.send({ type: 'RazorpayWebhook', eventId: id, correlationId });
+    });
   const postService = createPostService({
     postRepo: createPostRepository({ pool: db.primaryPool, readPool: db.replicaPool }),
     previewCache,
+    entitlement: billingService,
     publicationService,
     clock,
   });
@@ -84,9 +141,14 @@ export function createContainer(config: ContainerConfig): AppContainer {
     subscriptionService,
     rateLimiter,
     previewCache,
+    billingService,
+    enqueueHook,
+    webhookSecret,
     close: async () => {
       await rateLimiter.close();
       await previewCache.close();
+      if (billingService) await billingService.close();
+      hooks.close();
       await db.close();
     },
   };

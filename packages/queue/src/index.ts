@@ -51,6 +51,12 @@ export const sendMessage = z.object({
   keys: z.array(key).min(1).max(100),
   correlationId: z.string().max(64),
 });
+export const hookMessage = z.object({
+  type: z.literal('RazorpayWebhook'),
+  eventId: uuid,
+  correlationId: z.string().max(64),
+});
+export type HookMessage = z.infer<typeof hookMessage>;
 export type EventMessage = z.infer<typeof eventMessage>;
 export type SendMessage = z.infer<typeof sendMessage>;
 export type DeliveryKey = z.infer<typeof key>;
@@ -84,6 +90,7 @@ export function createSqsQueues(config: {
   baseUrl: string;
   eventsName?: string;
   sendsName?: string;
+  hooksName?: string;
 }) {
   const client = new SQSClient({
     region: config.region,
@@ -92,6 +99,7 @@ export function createSqsQueues(config: {
   });
   const eventsName = config.eventsName ?? 'vichaar-events';
   const sendsName = config.sendsName ?? 'vichaar-sends';
+  const hooksName = config.hooksName ?? 'vichaar-hooks';
   function makeQueue<T>(name: string, schema: z.ZodType<T>, receiveBatch = 10): Queue<T> {
     const url = `${config.baseUrl.replace(/\/$/, '')}/${name}`;
     return {
@@ -150,14 +158,15 @@ export function createSqsQueues(config: {
   return {
     events: makeQueue(eventsName, eventMessage),
     sends: makeQueue(sendsName, sendMessage, 1),
+    hooks: makeQueue(hooksName, hookMessage, 1),
     async createLocalQueues() {
       localOnly();
-      for (const name of [eventsName, sendsName])
+      for (const name of [eventsName, sendsName, hooksName])
         await client.send(new CreateQueueCommand({ QueueName: name }));
     },
     async deleteLocalQueues() {
       localOnly();
-      for (const name of [eventsName, sendsName])
+      for (const name of [eventsName, sendsName, hooksName])
         await client.send(
           new DeleteQueueCommand({ QueueUrl: `${config.baseUrl.replace(/\/$/, '')}/${name}` }),
         );

@@ -1,9 +1,20 @@
 import { createContainer } from './container.js';
 import { createServer } from './server.js';
 import { logger } from './shared/logger.js';
+import { startApiTracing } from './shared/tracing.js';
+import { z } from 'zod';
+
+const tracing = startApiTracing(
+  z
+    .string()
+    .url()
+    .optional()
+    .parse(process.env.OTEL_EXPORTER_OTLP_ENDPOINT || undefined),
+);
 
 const port = Number(process.env.PORT) || 4000;
-const databaseUrl = process.env.DATABASE_URL || 'postgres://vichaar:vichaar_pass@localhost:5432/vichaar';
+const databaseUrl =
+  process.env.DATABASE_URL || 'postgres://vichaar:vichaar_pass@localhost:5432/vichaar';
 const databaseReplicaUrl = process.env.DATABASE_REPLICA_URL;
 
 const container = createContainer({
@@ -22,6 +33,7 @@ async function shutdown(signal: string) {
   server.close(async () => {
     logger.info('HTTP server closed');
     await container.close();
+    await tracing.shutdown();
     logger.info('Database connections closed');
     process.exit(0);
   });

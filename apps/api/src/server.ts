@@ -20,6 +20,11 @@ import { createAuthRouter } from './modules/auth/index.js';
 import { createPublicationRouter } from './modules/publications/index.js';
 import { createPostRouter, createPublicPostRouter } from './modules/posts/index.js';
 import {
+  createCheckoutRouter,
+  createMyBillingRouter,
+  createRazorpayWebhookRouter,
+} from './modules/billing/index.js';
+import {
   createSubscriptionRouter,
   createConfirmationRouter,
   subscribeSchema,
@@ -31,7 +36,9 @@ export function createServer(container: AppContainer): Express {
   const trustedProxy = process.env.TRUST_PROXY?.trim();
 
   if (trustedProxy) app.set('trust proxy', trustedProxy);
+
   const rateLimiter = container.rateLimiter;
+
   app.use((req: Request, res: Response, next: NextFunction) => {
     const raw = req.headers['x-correlation-id'];
     const correlationId =
@@ -72,6 +79,16 @@ export function createServer(container: AppContainer): Express {
     }
     next();
   });
+  app.use(async (req, _res, next) => {
+    if (req.method === 'POST' && /^\/public\/[a-z0-9-]+\/checkout$/.test(req.path) && rateLimiter) {
+      const allowed = await rateLimiter.consume(`checkout:${req.ip ?? 'unknown'}`, 10, 60);
+      if (!allowed) {
+        next(new AppError('Too many checkout attempts', 429, 'RATE_LIMITED'));
+        return;
+      }
+    }
+    next();
+  });
   app.use((req, _res, next) => {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       const origin = req.get('origin');
@@ -88,17 +105,40 @@ export function createServer(container: AppContainer): Express {
     }
     next();
   });
+  if (container.billingService && container.webhookSecret && container.enqueueHook)
+    app.use(
+      '/webhooks',
+      express.raw({ type: 'application/json', limit: '1mb' }),
+      createRazorpayWebhookRouter(
+        container.billingService,
+        container.webhookSecret,
+        container.enqueueHook,
+      ),
+    );
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(cookieParser());
   app.get('/metrics', (_req, res) => {
     const stats = container.previewCache?.stats();
-    if (!stats) { res.status(503).end(); return; }
-    res.type('text/plain; version=0.0.4').send(
-      `vichaar_preview_cache_hits_total ${stats.hits}\n` +
-      `vichaar_preview_cache_misses_total ${stats.misses}\n` +
-      `vichaar_preview_cache_redis_errors_total ${stats.redisErrors}\n`,
-    );
+    if (!stats) {
+      res.status(503).end();
+      return;
+    }
+    const billing = container.billingService?.stats();
+    res
+      .type('text/plain; version=0.0.4')
+      .send(
+        `vichaar_preview_cache_hits_total ${stats.hits}\n` +
+          `vichaar_preview_cache_misses_total ${stats.misses}\n` +
+          `vichaar_preview_cache_redis_errors_total ${stats.redisErrors}\n` +
+          (billing
+            ? `vichaar_billing_checkouts_total ${billing.checkouts}\n` +
+              `vichaar_billing_webhooks_received_total ${billing.webhooks}\n` +
+              `vichaar_entitlement_cache_hits_total ${billing.cacheHits}\n` +
+              `vichaar_entitlement_db_checks_total ${billing.dbChecks}\n` +
+              `vichaar_entitlement_redis_errors_total ${billing.redisErrors}\n`
+            : ''),
+      );
   });
   app.use('/', createHealthRouter({ healthService: container.healthService }));
   const { authService, publicationService, postService, subscriptionService } = container;
@@ -117,7 +157,11 @@ export function createServer(container: AppContainer): Express {
     });
     app.use('/publications', createPublicationRouter({ publicationService, authService }));
     app.use('/publications/:pubId/posts', createPostRouter({ postService, authService }));
-    app.use('/public/:subdomain', createPublicPostRouter({ postService }));
+    app.use('/public/:subdomain', createPublicPostRouter({ postService, authService }));
+    if (container.billingService) {
+      app.use('/public/:subdomain', createCheckoutRouter(container.billingService, authService));
+      app.use('/me', createMyBillingRouter(container.billingService, authService));
+    }
     if (subscriptionService) {
       app.use('/public/:subdomain', createSubscriptionRouter({ service: subscriptionService }));
       app.use('/subscriptions', createConfirmationRouter({ service: subscriptionService }));

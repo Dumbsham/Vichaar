@@ -18,6 +18,8 @@ export function createWorkerMetrics(role: string, port: number) {
     'sweeper_unknown_outcome_total',
     'sweeper_requeued_total',
     'sweeper_outbox_purged_total',
+    'webhook_processed_total',
+    'reconciliation_checked_total',
   ]);
   const server: Server = createServer((req, res) => {
     if (req.url !== '/metrics') {

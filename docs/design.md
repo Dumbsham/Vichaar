@@ -77,13 +77,13 @@ Comments, podcasts and video, mobile apps, recommendations, multi-author teams, 
 - Demo scale is simulated with seeded data and load tests against a stubbed email provider.
 - Writers must confirm they have consent for any address they add (India's DPDP Act).
 
-## Current implementation (Phase 2)
+## Current implementation (Phase 4)
 
 The local demo API now supports signup, login and logout with Argon2id password hashes and hashed PostgreSQL sessions. Auth requests use a Redis token bucket with a smaller local fallback when Redis is unavailable. It also supports tenant-scoped publication and draft post endpoints; version-checked autosave; and a publish transaction that writes sanitized HTML, tracked link rows, a writing streak, and one `PostPublished` outbox event. A public endpoint returns only the preview of a published post. The full body of a paid post is never returned by that endpoint.
 
 Phase 2 adds double opt-in subscriptions, signed confirmation and unsubscribe links, suppression, reader delivery preferences, a monthly partitioned delivery ledger, and five separately run worker roles. The outbox relay publishes typed SQS messages; fan-out pages active subscribers in batches of 1,000; the scheduler uses a durable round-robin publication cursor, daily send budgets, and queue-depth backpressure; the sender claims up to 100 delivery rows in one statement before any provider call. A stale `sending` row becomes `failed: unknown_outcome` and is never automatically sent again. Explicit temporary SMTP rejections can return to `pending` with bounded exponential backoff and jitter. The sweeper also recovers stale `queued` rows and purges published outbox records older than seven days.
 
-The local demo runs API and worker Node processes against Compose dependencies. The SMTP path targets Mailpit locally; tests use a stub provider. SES is restricted to production and configured verified sandbox recipients. The Next.js editor, external CDN deployment, paywall, tracking ingestion, containerized API/workers, and Terraform deployment remain future phases. Public email links remain direct until the Phase 5 tracking endpoints exist. No live demo or production deployment is claimed.
+Phase 3 added Redis public-preview caching, narrow invalidation, CDN-compatible headers, and a streaming read replica. Phase 4 adds test-mode Razorpay checkout, a signed webhook inbox, a hooks worker, hourly reconciliation, and database-backed paid access with a 60-second Redis cache. Tests use a stub Razorpay provider; real test-mode checkout requires operator-supplied test credentials. The local demo runs API and worker Node processes against Compose dependencies. The SMTP path targets Mailpit locally; tests use a stub provider. SES is restricted to production and configured verified sandbox recipients. The Next.js editor, external CDN deployment, tracking ingestion, containerized API/workers, and Terraform deployment remain future phases. Public email links remain direct until the Phase 5 tracking endpoints exist. No live demo or production deployment is claimed.
 
 For deployments behind a reverse proxy, set `TRUST_PROXY` to that proxy's specific address or CIDR so `req.ip` used by rate limiting identifies the reader. Direct API access leaves proxy trust disabled. This must match the actual Caddy/network setup before enabling it.
 
@@ -166,7 +166,7 @@ Target machine: 2 vCPU, 12 GB RAM, running every service. These are starting lim
 
 A 4 GB swapfile is a safety net, not working memory. If swap is used in normal operation the budget is wrong. Under pressure, observability and analytics are sacrificed first, then the replica. The primary, API and sender are protected.
 
-**CPU is the likelier constraint.** Rough peak shares of 2 vCPU: Postgres 0.5-0.7, sender and fan-out 0.5-0.8, API and web 0.3-0.5, analytics and observability 0.3-0.4. Peaks overlap, so priorities apply: the sender is capped at `cpus: 1.0` in the future container deployment, the API and web get a higher `cpu_shares`, and sender concurrency is capped. The current API opens at most 10 primary and 10 replica pool connections; each of the five workers opens at most 3 primary and 3 replica connections, for an upper bound of 50 connections when the replica URL points at the primary. The local worker supervisor is not container-limited yet; the 1.2 GB worker budget remains to be measured under load before deployment.
+**CPU is the likelier constraint.** Rough peak shares of 2 vCPU: Postgres 0.5-0.7, sender and fan-out 0.5-0.8, API and web 0.3-0.5, analytics and observability 0.3-0.4. Peaks overlap, so priorities apply: the sender is capped at `cpus: 1.0` in the future container deployment, the API and web get a higher `cpu_shares`, and sender concurrency is capped. The current API opens at most 10 primary and 10 replica pool connections; each of the seven worker roles opens at most 3 primary and 3 replica connections, for an upper bound of 62 connections when the replica URL points at the primary. The local worker supervisor is not container-limited yet; the 1.2 GB worker budget remains to be measured under load before deployment.
 
 `sustainable sends per second = vCPUs available to the send path / CPU-seconds per email`. Measure CPU milliseconds per email early (Phase 2). If the measured value does not support 1,000 per second on this VM, publish the measured number as the target instead of hiding it. Load generators (k6) run from a separate machine.
 
@@ -278,7 +278,8 @@ erDiagram
     publications ||--o{ posts : "has"
     posts ||--|| post_contents : "has body"
     publications ||--o{ subscriptions : "has"
-    subscriptions ||--o| paid_subscriptions : "may have"
+    publications ||--o{ billing_plans : "prices"
+    subscriptions ||--o{ paid_subscriptions : "payment history"
     posts ||--o{ post_deliveries : "sent as"
     subscriptions ||--o{ post_deliveries : "receives"
     posts ||--o{ tracked_links : "contains"
@@ -349,10 +350,18 @@ erDiagram
         timestamptz created_at
     }
 
+    billing_plans {
+        uuid publication_id PK, FK
+        int price_paise PK
+        text razorpay_plan_id UK
+        timestamptz created_at
+    }
+
     paid_subscriptions {
         uuid id PK
-        uuid subscription_id FK, UK
+        uuid subscription_id FK
         uuid publication_id FK
+        uuid user_id FK
         text razorpay_subscription_id UK
         text status "created, active, halted, cancelled, expired"
         int price_paise
@@ -419,7 +428,7 @@ erDiagram
 ### Unique constraints
 - `subscriptions (publication_id, email)`
 - `posts (publication_id, slug)`
-- `paid_subscriptions (subscription_id)` and `(razorpay_subscription_id)`
+- `paid_subscriptions (razorpay_subscription_id)` and a partial unique index on `(publication_id, subscription_id)` for open rows
 - `milestones (publication_id, kind, threshold)`, which makes a milestone fire exactly once
 - `quote_cards (post_id, quote_hash)`
 - `suppressions (publication_id, email)`; platform-wide suppression is planned with email-event ingestion
@@ -487,7 +496,7 @@ erDiagram
 | `GET`, `POST /subscriptions/preferences/:token` | Change an active subscription's slot and timezone |
 | `POST /public/:subdomain/posts/:slug/quote-cards` | Create a quote card, 422 if the quote is not in the post |
 
-**Reader, account and billing (planned):** `GET /me/subscriptions`, `POST /public/:subdomain/checkout`, `POST /me/subscriptions/:id/cancel`. After checkout the UI polls `GET /me/subscriptions`, because the webhook is the source of truth for payment state.
+**Reader, account and billing (implemented in the API):** `GET /me/subscriptions?publicationId=:id`, `POST /public/:subdomain/checkout`, `POST /me/subscriptions/:id/cancel` with `publicationId` in the body. After checkout the future UI polls the publication-scoped status endpoint, because the webhook is the source of truth for payment state. The paid full-body endpoint checks a 60-second Redis entitlement cache, then PostgreSQL on a miss or Redis failure; PostgreSQL failure returns 503. The webhook and hourly reconciliation worker roles use the existing 1.2 GB worker budget target; the budget has not yet been measured under load. See [ADR-012](adr/012_billingWebhookInbox.md) for the account-binding and test-mode limitations.
 
 **Tracking endpoints** (root paths, run as a separate process from the main API using the same codebase, different entrypoint, so pixel spikes never degrade API latency): `GET /t/o/:token.gif` (open pixel), `GET /t/c/:token` (click, 302 to a stored URL).
 
@@ -556,6 +565,8 @@ Summarized here, detailed in [failure-analysis.md](failure-analysis.md). Readers
 - **Metrics (Prometheus):** throughput, latency, error rate, queue depth and oldest-message age, retries, cache hit ratio, CPU milliseconds per email, unknown-outcome deliveries, dropped tracking events.
 - **Traces:** OpenTelemetry spans around external calls and queue handling.
 - **Alerts:** dead-letter queue depth above 0, oldest message age on send, tracking and webhook queues, unknown-outcome deliveries above 0, bounce and complaint rates per publication, cache hit ratio below 90%, replica lag, disk above 80%, container memory near limit, webhook failures, reconciliation drift, dropped tracking events.
+
+The Phase 4 API exposes billing checkout/webhook totals and entitlement cache hit, database fallback, and Redis error counters at `/metrics`. The hooks worker exposes processed count, error count, latency, and HookQ depth; reconciliation exposes checked count and errors. Alert on a nonempty HookQ DLQ, sustained hook-worker errors, or no successful reconciliation for more than two hours once monitoring is deployed.
 
 ## Testing
 

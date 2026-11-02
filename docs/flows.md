@@ -147,8 +147,8 @@ A ClickHouse materialized view aggregates per post and day: human opens (`isPref
 ### 3.2 Receiving a webhook (API)
 1. Read the **raw body**.
 2. Verify the signature with a constant-time comparison. Failure: 401.
-3. `INSERT INTO webhook_events (provider, provider_event_id, type, payload, ...) ON CONFLICT DO NOTHING`. A duplicate delivery stops here with 200.
-4. Enqueue the event id, return **200**.
+3. `INSERT INTO webhook_events (provider, provider_event_id, type, payload, ...) ON CONFLICT DO NOTHING`. A duplicate reuses the existing inbox ID.
+4. Enqueue the event ID, return **200**. Re-enqueuing a pending duplicate lets a retry recover from an earlier queue failure; the worker remains idempotent.
 
 ### 3.3 Processing (worker)
 In one transaction:

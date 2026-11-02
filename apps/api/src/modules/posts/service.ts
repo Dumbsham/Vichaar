@@ -114,7 +114,11 @@ export interface PostService {
     postId: string,
     input: UpdatePostInput,
   ): Promise<ReturnType<typeof postView>>;
-  unpublish(publicationId: string, ownerId: string, postId: string): Promise<ReturnType<typeof postView>>;
+  unpublish(
+    publicationId: string,
+    ownerId: string,
+    postId: string,
+  ): Promise<ReturnType<typeof postView>>;
   publish(
     publicationId: string,
     ownerId: string,
@@ -123,18 +127,20 @@ export interface PostService {
     correlationId: string,
   ): Promise<ReturnType<typeof postView>>;
   publicPreview(subdomain: string, slug: string): Promise<PublicPreview>;
-  publicFull(subdomain: string, slug: string): Promise<{ htmlFull: string }>;
+  publicFull(subdomain: string, slug: string, userId?: string): Promise<{ htmlFull: string }>;
 }
 export function createPostService({
   postRepo,
   publicationService,
   clock,
   previewCache,
+  entitlement,
 }: {
   postRepo: PostRepository;
   publicationService: PublicationService;
   clock: Clock;
   previewCache: PreviewCache;
+  entitlement?: { isEntitled(publicationId: string, userId: string): Promise<boolean> };
 }): PostService {
   return {
     async create(publicationId, ownerId, input) {
@@ -214,12 +220,17 @@ export function createPostService({
       await previewCache.invalidate(previewCacheKey(publication.subdomain, result.row.slug));
       return postView(result.row);
     },
-    async publicFull(subdomain, slug) {
+    async publicFull(subdomain, slug, userId) {
       const publication = await publicationService.getBySubdomain(subdomain);
       const publicRow = await postRepo.findPublic(publication.id, slug);
       if (!publicRow) throw new NotFoundError();
-      if (publicRow.access === 'paid')
-        throw new AppError('Paid access is not available yet', 503, 'ENTITLEMENT_UNAVAILABLE');
+      if (publicRow.access === 'paid') {
+        if (!userId) throw new AppError('Login required', 401, 'UNAUTHORIZED');
+        if (!entitlement)
+          throw new AppError('Paid access is not available yet', 503, 'ENTITLEMENT_UNAVAILABLE');
+        if (!(await entitlement.isEntitled(publication.id, userId)))
+          throw new AppError('Paid subscription required', 403, 'FORBIDDEN');
+      }
       const row = await postRepo.find(publication.id, publicRow.id);
       if (!row || row.status !== 'published') throw new NotFoundError();
       return { htmlFull: row.html_full ?? '' };
