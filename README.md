@@ -11,7 +11,7 @@
 
 </div>
 
-> **Current status:** Phases 1–4 are implemented locally, including read caching and test-mode billing. Razorpay requests need your own test keys; automated tests use a stub provider. The Next.js app, tracking ingestion, and deployment containers are later phases. The scale numbers below remain unmeasured design goals.
+> **Current status:** Phases 1–5 are implemented locally. The Phase 5 tracking path passed a 1,000 requests/second local k6 run; the planned 2 vCPU demo capacity remains unverified. Razorpay requests need your own test keys; automated tests use a stub provider. The Next.js app and deployment containers are later phases.
 
 ## What works today
 
@@ -25,7 +25,7 @@
 - **Delivery:** Five delivery worker roles relay outbox events through ElasticMQ, fan out active subscribers in pages, claim due rows fairly with a daily publication cap, send through a stub, Mailpit SMTP, or SES sandbox provider, and sweep stale rows. A sender claims a row before calling the provider; ambiguous outcomes are flagged and never automatically retried. Monthly partitions and a default partition hold the delivery ledger.
 - **Paid access:** Logged-in, confirmed newsletter readers can start a Razorpay test-mode subscription. Signed webhooks enter a durable inbox and the hooks queue; a worker applies them once and rejects stale events. Paid bodies require a database-backed entitlement with a 60-second Redis cache. A separate hourly worker reconciles missed payment events. Cancellation and subscription status endpoints are available.
 
-Scheduled posts are released by the scheduler when due. There is no Next.js frontend or analytics endpoint yet. Email links are sent directly; open and click tracking are Phase 5 work.
+Scheduled posts are released by the scheduler when due. There is no Next.js frontend yet. Email post-body links use signed tracking redirects and an open pixel; analytics statistics are available to publication owners.
 
 ## Run the current API locally
 
@@ -43,6 +43,8 @@ pnpm dev
 The API listens on `http://localhost:4000`. `pnpm dev` starts seven worker roles as separate processes, including webhooks and hourly reconciliation. Check `GET /healthz` for process health and `GET /readyz` for PostgreSQL connectivity. `pnpm db:seed` currently checks the baseline migration record; it does not create sample writers or posts.
 
 The workers need local SQS credentials exported, such as `AWS_ACCESS_KEY_ID=test` and `AWS_SECRET_ACCESS_KEY=test`. [`.env.example`](.env.example) documents the remaining configuration. Scripts do not automatically load `.env`; export variables or provide them through your process manager. The local defaults target Compose. `TRUST_PROXY` should be set only to a known reverse proxy address or CIDR when deploying behind one.
+
+Phase 5 starts a separate tracking listener at `http://localhost:4001` and an analytics worker. Set the same `TRACKING_HMAC_SECRET` (at least 32 characters) for both processes. The local Compose ClickHouse user and password are in `.env.example`; existing ClickHouse containers created with different credentials need matching `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`. Writer statistics are at `GET /publications/:pubId/stats`. Tracking metrics are at port 4001 `/metrics`, and analytics worker metrics use port 9107.
 
 ### Razorpay test-mode setup
 
@@ -63,6 +65,8 @@ No real charge or live payment is supported. Automated webhook tests use signed 
 | `GET`, `PATCH` | `/publications/:pubId/posts/:postId`          | Read or autosave an owned post                     |
 | `POST`         | `/publications/:pubId/posts/:postId/publish`  | Publish or record a future schedule; returns `202` |
 | `GET`          | `/public/:subdomain/posts/:slug`              | Read a published public preview                    |
+| `GET`          | `/publications/:pubId/stats`                  | Publication-scoped open and click rollups          |
+| `GET`          | `:4001/t/o/:token.gif`, `:4001/t/c/:token`    | Open pixel and signed click redirect               |
 | `GET`          | `/healthz`, `/readyz`                         | Liveness and database readiness                    |
 | `POST`         | `/public/:subdomain/subscribe`                | Request double opt-in; always returns `202`        |
 | `POST`         | `/subscriptions/confirm`                      | Confirm a signed link                              |
@@ -117,7 +121,7 @@ docs/              Design, flows, threat model, failure analysis, ADRs
 - [x] Phase 2: double opt-in subscriptions and the email delivery workers
 - [x] Phase 3: CDN-compatible headers, Redis public-preview cache, and working read replica
 - [x] Phase 4: Razorpay test-mode subscriptions, webhooks, and paywall
-- [ ] Phase 5: open/click tracking and ClickHouse analytics pipeline
+- [x] Phase 5: open/click tracking and ClickHouse analytics pipeline (local load result in `docs/benchmarks.md`)
 - [ ] Later phases: quote cards, milestones, observability, load and chaos measurements, Next.js frontend, deployment blueprint
 
 The detailed sequence and scope are in [docs/MasterPlan.md](docs/MasterPlan.md). Custom domains and CSV subscriber import are outside the v1 scope.

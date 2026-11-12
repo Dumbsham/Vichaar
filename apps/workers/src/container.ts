@@ -7,6 +7,7 @@ import { createPipeline } from './pipeline.js';
 import { createWorkerMetrics } from './metrics.js';
 import { startTracing } from './tracing.js';
 import { createBillingPipeline } from './billing.js';
+import { createAnalyticsPipeline } from './analytics.js';
 
 export interface WorkerConfig {
   production: boolean;
@@ -22,7 +23,13 @@ export interface WorkerConfig {
   smtpHost: string;
   smtpPort: number;
   verifiedAddresses: string[];
-  role: 'relay' | 'fanout' | 'scheduler' | 'sender' | 'sweeper' | 'webhooks' | 'reconciliation';
+  role: 'relay' | 'fanout' | 'scheduler' | 'sender' | 'sweeper' | 'webhooks' | 'reconciliation' | 'analytics';
+  clickhouseUrl: string;
+  clickhouseDb: string;
+  clickhouseUser?: string;
+  clickhousePassword?: string;
+  trackingBaseUrl: string;
+  trackingSecret: string;
   razorpayKeyId?: string;
   razorpayKeySecret?: string;
   metricsBasePort: number;
@@ -44,7 +51,7 @@ export function createWorkerContainer(config: WorkerConfig) {
   const metrics = createWorkerMetrics(
     config.role,
     config.metricsBasePort +
-      ['relay', 'fanout', 'scheduler', 'sender', 'sweeper', 'webhooks', 'reconciliation'].indexOf(
+      ['relay', 'fanout', 'scheduler', 'sender', 'sweeper', 'webhooks', 'reconciliation', 'analytics'].indexOf(
         config.role,
       ),
   );
@@ -72,6 +79,8 @@ export function createWorkerContainer(config: WorkerConfig) {
     tokenSecret: config.tokenSecret,
     baseUrl: config.publicBaseUrl,
     fromAddress: config.emailFrom,
+    trackingBaseUrl: config.trackingBaseUrl,
+    trackingSecret: config.trackingSecret,
     metrics,
   });
   const billing = createBillingPipeline({
@@ -81,12 +90,14 @@ export function createWorkerContainer(config: WorkerConfig) {
     keyId: config.razorpayKeyId,
     keySecret: config.razorpayKeySecret,
   });
+  const analytics = createAnalyticsPipeline({ tracks: queues.tracks, clickhouseUrl: config.clickhouseUrl, database: config.clickhouseDb, user: config.clickhouseUser, password: config.clickhousePassword });
   return {
     database,
     queues,
     metrics,
     pipeline,
     billing,
+    analytics,
     async close() {
       await Promise.all([
         database.close(),

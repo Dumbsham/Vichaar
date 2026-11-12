@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-const roles = ['relay', 'fanout', 'scheduler', 'sender', 'sweeper', 'webhooks', 'reconciliation'];
+const roles = ['relay', 'fanout', 'scheduler', 'sender', 'sweeper', 'webhooks', 'reconciliation', 'analytics'];
 const children = roles.map((role) =>
   spawn('pnpm', ['exec', 'tsx', 'watch', 'src/index.ts'], {
     env: { ...process.env, WORKER_ROLE: role },

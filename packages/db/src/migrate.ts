@@ -23,6 +23,11 @@ export async function runMigrations(databaseUrl?: string) {
       if (fs.existsSync(migrationsDir)) {
         const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
         for (const file of files) {
+          // The legacy runner replays every SQL file. This migration drops a constraint once.
+          if (file === '0009_billing_renewals.sql') {
+            const applied = await client.query("SELECT to_regclass('paid_subscriptions_open_unique') IS NOT NULL AS applied");
+            if (applied.rows[0]?.applied === true) continue;
+          }
           console.log(`Executing migration: ${file}...`);
           const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
           await client.query(sql);

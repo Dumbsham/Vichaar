@@ -8,7 +8,7 @@ Sections 1.1–1.7 are implemented for local API and worker processes. A subscri
 
 The delivery partition key is fixed from `posts.delivery_month` at publish time and remains unchanged when `send_at` moves. The scheduler rotates through up to 20 due publications per tick using a locked durable cursor, claims up to 100 rows per publication, and observes the daily IST budget. The sender marks explicit SMTP 4xx rejections pending with bounded backoff (up to five claims), explicit 5xx rejections failed with a tenant suppression, and ambiguous transport failures `failed: unknown_outcome`. The sweeper processes at most 1,000 stale rows per pass and removes up to 1,000 old published outbox rows.
 
-The sender currently includes a direct sanitized post link and unsubscribe/preferences links. Open pixels, click rewriting, bounce/complaint ingestion, and platform-wide suppression belong to later tracking and webhook phases; no tracking URL is emitted before its endpoint exists. Worker metrics are available on ports 9100–9104 at `/metrics`; OTLP traces are emitted when `OTEL_EXPORTER_OTLP_ENDPOINT` is configured. Alert rules and container deployment are still planned.
+The sender now includes an open pixel and rewrites stored post-body links to signed tracking redirects. The read-online and unsubscribe/preferences links remain direct. Bounce/complaint ingestion and platform-wide suppression remain later work. Worker metrics are available from port 9100; OTLP traces are emitted when `OTEL_EXPORTER_OTLP_ENDPOINT` is configured. Alert rules and container deployment are still planned.
 
 **Conventions**
 - Postgres is the source of truth. Queues carry work, not truth.
@@ -112,7 +112,7 @@ stateDiagram-v2
 
 **Process Isolation:** The tracking endpoints (`/t/o/:token.gif` and `/t/c/:token`) run as a dedicated, standalone process (same codebase, dedicated entrypoint `apps/api/src/tracking-server.ts` or `apps/tracking`). This protects the main API from event-loop saturation or connection-pool starvation when an email blast triggers sudden traffic spikes.
 
-**Token:** `base64url(payload).base64url(HMAC)`, where the payload holds a version, key id, subscription id, post id and link id. The key id allows key rotation.
+**Token:** `base64url(payload).base64url(HMAC)`, where the payload holds publication, subscription, post and optional link IDs, event kind, and expiry. Key rotation is not implemented yet.
 
 ### 2.1 Open pixel `GET /t/o/:token.gif`
 1. Verify the signature (no database needed). Invalid: return the pixel anyway, record nothing.
@@ -122,11 +122,11 @@ stateDiagram-v2
 
 ### 2.2 Click `GET /t/c/:token`
 1. Verify the signature.
-2. Look up the target URL by link id: in-process LRU, then Redis, then Postgres. Links never change, so cached entries never need invalidating.
+2. Look up the target URL by publication, post and link ID in PostgreSQL; require the post to remain published. A cache has not been added yet.
 3. Buffer the click event the same way as opens.
 4. Respond **302** to the stored URL. Never redirect to a URL taken from the request.
 
-If the queue is unreachable the endpoint still answers: the buffer is bounded, and overflow events are dropped and counted (`tracking_events_dropped_total`). A reader is never blocked by analytics.
+If the queue is unreachable the endpoint still answers: the buffer is bounded, and overflow events are dropped and counted (`vichaar_tracking_dropped_total`). ClickHouse availability never blocks a redirect. If PostgreSQL lookup fails, an uncached click cannot resolve its verified target and returns 404.
 
 ### 2.3 Consumer
 1. Read up to 1,000 events or wait 1 second, whichever comes first.
@@ -134,7 +134,7 @@ If the queue is unreachable the endpoint still answers: the buffer is bounded, a
 3. Acknowledge only after the insert succeeds. Repeated failures go to the dead-letter queue.
 
 ### 2.4 Rollups
-A ClickHouse materialized view aggregates per post and day: human opens (`isPrefetch=false`), prefetch opens, unique openers, clicks per link. Dashboards read rollups, never raw events.
+A ClickHouse materialized view aggregates non-prefetch open and click event IDs per publication, post, UTC day and event type. The writer stats API reads those rollups. Prefetch events remain in the raw table but are excluded from stats. Unique opener and per-link charts are not implemented.
 
 ---
 

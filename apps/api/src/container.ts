@@ -31,6 +31,7 @@ import {
   createSubscriptionService,
   type SubscriptionService,
 } from './modules/subscriptions/index.js';
+import { createAnalyticsRepository, createAnalyticsService } from './modules/analytics/index.js';
 
 export interface AppContainer {
   db?: DatabaseClients;
@@ -42,6 +43,7 @@ export interface AppContainer {
   rateLimiter?: RateLimiter;
   previewCache?: PreviewCache;
   billingService?: BillingService;
+  analyticsService?: ReturnType<typeof createAnalyticsService>;
   enqueueHook?: (id: string, correlationId: string) => Promise<void>;
   webhookSecret?: string;
   close: () => Promise<void>;
@@ -82,6 +84,7 @@ export function createContainer(config: ContainerConfig): AppContainer {
   const billingPublicationService = createPublicationService({
     publicationRepo: createPublicationRepository({ pool: db.primaryPool }),
   });
+  const analyticsService = createAnalyticsService({ publicationService: billingPublicationService, repo: createAnalyticsRepository(process.env.CLICKHOUSE_URL ?? 'http://localhost:8123', process.env.CLICKHOUSE_DB ?? 'vichaar', process.env.CLICKHOUSE_USER, process.env.CLICKHOUSE_PASSWORD) });
   const rateLimiter = createRateLimiter(
     process.env.REDIS_URL ?? 'redis://localhost:6379',
     Date.now,
@@ -142,6 +145,7 @@ export function createContainer(config: ContainerConfig): AppContainer {
     rateLimiter,
     previewCache,
     billingService,
+    analyticsService,
     enqueueHook,
     webhookSecret,
     close: async () => {

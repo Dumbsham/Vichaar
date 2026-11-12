@@ -36,6 +36,11 @@ describe('Phase 1B live domain flow', () => {
       .get(`/publications/${pubId}`)
       .set('Cookie', strangerCookie);
     expect(strangerRead.status).toBe(404);
+    const strangerStats = await request(app)
+      .get(`/publications/${pubId}/stats`)
+      .set('Cookie', strangerCookie);
+    expect(strangerStats.status).toBe(404);
+    expect((await request(app).get(`/publications/${pubId}/stats`)).status).toBe(401);
     const strangerPost = await request(app)
       .post(`/publications/${pubId}/posts`)
       .set('Cookie', strangerCookie)

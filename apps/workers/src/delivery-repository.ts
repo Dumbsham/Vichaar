@@ -54,6 +54,10 @@ const dbKey = (key: DeliveryKey) => ({
 
 export function createDeliveryRepository(pool: Pool) {
   return {
+    async trackedLinks(keys: DeliveryKey[]): Promise<Array<{ id: string; publication_id: string; post_id: string; target_url: string }>> {
+      const result = await pool.query<{ id: string; publication_id: string; post_id: string; target_url: string }>('SELECT id,publication_id,post_id,target_url FROM tracked_links WHERE publication_id=ANY($1::uuid[]) AND post_id=ANY($2::uuid[])', [[...new Set(keys.map((key) => key.publicationId))], [...new Set(keys.map((key) => key.postId))]]);
+      return result.rows;
+    },
     async relay(send: (event: EventMessage) => Promise<void>): Promise<number> {
       const client = await pool.connect();
       try {

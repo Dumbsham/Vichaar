@@ -99,6 +99,8 @@ services:
       - "9000:9000"
     environment:
       CLICKHOUSE_DB: vichaar
+      CLICKHOUSE_USER: vichaar
+      CLICKHOUSE_PASSWORD: vichaar_local
     volumes:
       - ./clickhouse-init.sql:/docker-entrypoint-initdb.d/init.sql
     deploy:

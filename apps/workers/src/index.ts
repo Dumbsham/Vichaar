@@ -21,6 +21,12 @@ const config = z
     SES_VERIFIED_ADDRESSES: z.string().default(''),
     RAZORPAY_KEY_ID: z.string().optional(),
     RAZORPAY_KEY_SECRET: z.string().optional(),
+    CLICKHOUSE_URL: z.string().url().default('http://localhost:8123'),
+    CLICKHOUSE_DB: z.string().regex(/^[a-zA-Z0-9_]+$/).default('vichaar'),
+    CLICKHOUSE_USER: z.string().optional(),
+    CLICKHOUSE_PASSWORD: z.string().optional(),
+    TRACKING_BASE_URL: z.string().url().default('http://localhost:4001'),
+    TRACKING_HMAC_SECRET: z.string().min(32).default('local_development_tracking_secret_32chars_min!'),
     WORKER_ROLE: z.enum([
       'relay',
       'fanout',
@@ -29,6 +35,7 @@ const config = z
       'sweeper',
       'webhooks',
       'reconciliation',
+      'analytics',
     ]),
     OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess(
       (value) => (value === '' ? undefined : value),
@@ -42,6 +49,12 @@ if (
   (!process.env.TOKEN_HMAC_SECRET || !process.env.EMAIL_FROM)
 ) {
   throw new Error('Production token and sender configuration must be explicit');
+}
+if (
+  process.env.NODE_ENV === 'production' &&
+  (!process.env.TRACKING_HMAC_SECRET || !config.TRACKING_BASE_URL.startsWith('https://'))
+) {
+  throw new Error('Production tracking configuration must be explicit and secure');
 }
 const worker = createWorkerContainer({
   production: process.env.NODE_ENV === 'production',
@@ -60,12 +73,18 @@ const worker = createWorkerContainer({
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean),
   role: config.WORKER_ROLE,
+  clickhouseUrl: config.CLICKHOUSE_URL,
+  clickhouseDb: config.CLICKHOUSE_DB,
+  clickhouseUser: config.CLICKHOUSE_USER,
+  clickhousePassword: config.CLICKHOUSE_PASSWORD,
+  trackingBaseUrl: config.TRACKING_BASE_URL,
+  trackingSecret: config.TRACKING_HMAC_SECRET,
   razorpayKeyId: config.RAZORPAY_KEY_ID,
   razorpayKeySecret: config.RAZORPAY_KEY_SECRET,
   metricsBasePort: config.METRICS_BASE_PORT,
   otlpEndpoint: config.OTEL_EXPORTER_OTLP_ENDPOINT,
 });
-const { database, queues, metrics, pipeline, billing } = worker;
+const { database, queues, metrics, pipeline, billing, analytics } = worker;
 const roles = {
   relay: { interval: 1000, run: pipeline.relay }, // post publish hogya,queue mein daalta
   fanout: { interval: 1000, run: pipeline.fanoutOnce },
@@ -74,6 +93,7 @@ const roles = {
   sweeper: { interval: 60_000, run: pipeline.sweep },
   webhooks: { interval: 1000, run: billing.processOnce },
   reconciliation: { interval: 3_600_000, run: billing.reconcile },
+  analytics: { interval: 1000, run: analytics.consumeOnce },
 };
 const role = roles[config.WORKER_ROLE];
 let running = true;
@@ -85,6 +105,7 @@ process.on('SIGINT', () => {
 });
 async function main() {
   await metrics.ready;
+  if (config.WORKER_ROLE === 'analytics') await analytics.initialize();
   const partitions = await verifyPostDeliveriesPartitions(database.primaryPool);
   if (!partitions.ok)
     throw new Error(`Missing delivery partitions: ${partitions.missingPartitions.join(',')}`);
@@ -100,6 +121,8 @@ async function main() {
             ? await queues.hooks.depth()
             : config.WORKER_ROLE === 'reconciliation'
               ? 0
+              : config.WORKER_ROLE === 'analytics'
+                ? await queues.tracks.depth()
               : await queues.sends.depth();
       metrics.setQueueDepth(queueDepth);
       metrics.increment('worker_runs_total');

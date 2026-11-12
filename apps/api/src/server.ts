@@ -29,6 +29,7 @@ import {
   createConfirmationRouter,
   subscribeSchema,
 } from './modules/subscriptions/index.js';
+import { createAnalyticsRouter } from './modules/analytics/index.js';
 
 export function createServer(container: AppContainer): Express {
   const app = express();
@@ -156,6 +157,7 @@ export function createServer(container: AppContainer): Express {
       next();
     });
     app.use('/publications', createPublicationRouter({ publicationService, authService }));
+    if (container.analyticsService) app.use('/publications/:pubId', createAnalyticsRouter(container.analyticsService, authService));
     app.use('/publications/:pubId/posts', createPostRouter({ postService, authService }));
     app.use('/public/:subdomain', createPublicPostRouter({ postService, authService }));
     if (container.billingService) {

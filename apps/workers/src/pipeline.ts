@@ -5,6 +5,7 @@ import type { DeliveryRepository, SendResult } from './delivery-repository.js';
 import { EmailRejectedError, type EmailProvider } from './provider.js';
 import type { WorkerMetrics } from './metrics.js';
 import { withSpan } from './tracing.js';
+import { signTrackingToken } from '@vichaar/shared';
 
 export interface PipelineDeps {
   repo: DeliveryRepository;
@@ -15,6 +16,8 @@ export interface PipelineDeps {
   tokenSecret: string;
   baseUrl: string;
   fromAddress: string;
+  trackingBaseUrl?: string;
+  trackingSecret?: string;
   metrics?: WorkerMetrics;
 }
 function cleanHeader(value: string): string {
@@ -115,6 +118,8 @@ export function createPipeline(deps: PipelineDeps) {
       for (const message of messages) {
         await withSpan('worker.send_batch', message.body.correlationId, async () => {
           const rows = await repo.claim(message.body.keys);
+          const links = rows.length ? await repo.trackedLinks(message.body.keys) : [];
+          const linkIds = new Map(links.map((link) => [`${link.publication_id}:${link.post_id}:${link.target_url}`, link.id]));
           const results: SendResult[] = [];
           for (const groupOfFive of group(rows, 5)) {
             const groupResults = await Promise.all(
@@ -160,12 +165,22 @@ export function createPipeline(deps: PipelineDeps) {
                 const unsubscribeUrl = `${base}/unsubscribe/${token}`;
                 const preferencesUrl = `${base}/subscriptions/preferences/${token}`;
                 const postUrl = `${base}/public/${encodeURIComponent(row.subdomain)}/posts/${encodeURIComponent(row.slug)}`;
+                const expiry = Math.floor(Date.now() / 1000) + 365 * 86400;
+                const trackBase = (deps.trackingBaseUrl ?? 'http://localhost:4001').replace(/\/$/, '');
+                const trackingSecret = deps.trackingSecret ?? deps.tokenSecret;
+                const htmlBody = (row.access === 'paid' ? row.html_preview : row.html_full).replace(/href="([^"]+)"/g, (original, target: string) => {
+                  const linkId = linkIds.get(`${row.publication_id}:${row.post_id}:${target}`);
+                  if (!linkId) return original;
+                  const clickToken = signTrackingToken(trackingSecret, { publicationId: row.publication_id, postId: row.post_id, subscriptionId: row.subscription_id, linkId, kind: 'click', exp: expiry });
+                  return `href="${trackBase}/t/c/${clickToken}"`;
+                });
+                const openToken = signTrackingToken(trackingSecret, { publicationId: row.publication_id, postId: row.post_id, subscriptionId: row.subscription_id, linkId: null, kind: 'open', exp: expiry });
                 try {
                   const messageId = await provider.send({
                     to: row.email,
                     from: deps.fromAddress,
                     subject: cleanHeader(row.title),
-                    html: `${row.access === 'paid' ? row.html_preview : row.html_full}<p><a href="${postUrl}">Read online</a></p><p><a href="${unsubscribeUrl}">Unsubscribe</a> · <a href="${preferencesUrl}">Delivery preferences</a></p>`,
+                    html: `${htmlBody}<p><a href="${postUrl}">Read online</a></p><p><a href="${unsubscribeUrl}">Unsubscribe</a> · <a href="${preferencesUrl}">Delivery preferences</a></p><img src="${trackBase}/t/o/${openToken}.gif" width="1" height="1" alt="">`,
                     headers: {
                       'List-Unsubscribe': `<${unsubscribeUrl}>`,
                       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',

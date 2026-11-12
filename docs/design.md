@@ -83,7 +83,7 @@ The local demo API now supports signup, login and logout with Argon2id password 
 
 Phase 2 adds double opt-in subscriptions, signed confirmation and unsubscribe links, suppression, reader delivery preferences, a monthly partitioned delivery ledger, and five separately run worker roles. The outbox relay publishes typed SQS messages; fan-out pages active subscribers in batches of 1,000; the scheduler uses a durable round-robin publication cursor, daily send budgets, and queue-depth backpressure; the sender claims up to 100 delivery rows in one statement before any provider call. A stale `sending` row becomes `failed: unknown_outcome` and is never automatically sent again. Explicit temporary SMTP rejections can return to `pending` with bounded exponential backoff and jitter. The sweeper also recovers stale `queued` rows and purges published outbox records older than seven days.
 
-Phase 3 added Redis public-preview caching, narrow invalidation, CDN-compatible headers, and a streaming read replica. Phase 4 adds test-mode Razorpay checkout, a signed webhook inbox, a hooks worker, hourly reconciliation, and database-backed paid access with a 60-second Redis cache. Tests use a stub Razorpay provider; real test-mode checkout requires operator-supplied test credentials. The local demo runs API and worker Node processes against Compose dependencies. The SMTP path targets Mailpit locally; tests use a stub provider. SES is restricted to production and configured verified sandbox recipients. The Next.js editor, external CDN deployment, tracking ingestion, containerized API/workers, and Terraform deployment remain future phases. Public email links remain direct until the Phase 5 tracking endpoints exist. No live demo or production deployment is claimed.
+Phase 3 added Redis public-preview caching, narrow invalidation, CDN-compatible headers, and a streaming read replica. Phase 4 adds test-mode Razorpay checkout, a signed webhook inbox, a hooks worker, hourly reconciliation, and database-backed paid access with a 60-second Redis cache. Phase 5 adds an isolated tracking listener on port 4001, bounded in-memory buffering to TrackQ, a ClickHouse batch consumer and materialized rollups, and publication-scoped writer statistics. Tests use a stub Razorpay provider; real test-mode checkout requires operator-supplied test credentials. The local demo runs API, tracking, and worker Node processes against Compose dependencies. The SMTP path targets Mailpit locally; tests use a stub provider. SES is restricted to production and configured verified sandbox recipients. The Next.js editor, external CDN deployment, containerized API/workers, and Terraform deployment remain future phases. No live demo or production deployment is claimed.
 
 For deployments behind a reverse proxy, set `TRUST_PROXY` to that proxy's specific address or CIDR so `req.ip` used by rate limiting identifies the reader. Direct API access leaves proxy trust disabled. This must match the actual Caddy/network setup before enabling it.
 
@@ -159,14 +159,15 @@ Target machine: 2 vCPU, 12 GB RAM, running every service. These are starting lim
 | ElasticMQ | 0.5 GB | JVM heap about 256 MB |
 | ClickHouse | 2.0 GB | `max_server_memory_usage` below the container limit |
 | API (Express) | 0.5 GB | quote-card renders limited to 2 at a time |
+| Tracking listener | 0.2 GB | bounded 1,000-event memory buffer; target not yet measured |
 | Workers (relay, fan-out, scheduler, sender, webhooks, analytics) | 1.2 GB | about 300 MB each |
 | Web (Next.js standalone) | 0.5 GB | |
 | Prometheus, Grafana, OpenTelemetry collector | 0.8 GB | |
-| **Total** | **9.65 GB** | about 2.35 GB (20%) left for page cache and spikes |
+| **Total** | **9.85 GB** | about 2.15 GB left for page cache and spikes |
 
 A 4 GB swapfile is a safety net, not working memory. If swap is used in normal operation the budget is wrong. Under pressure, observability and analytics are sacrificed first, then the replica. The primary, API and sender are protected.
 
-**CPU is the likelier constraint.** Rough peak shares of 2 vCPU: Postgres 0.5-0.7, sender and fan-out 0.5-0.8, API and web 0.3-0.5, analytics and observability 0.3-0.4. Peaks overlap, so priorities apply: the sender is capped at `cpus: 1.0` in the future container deployment, the API and web get a higher `cpu_shares`, and sender concurrency is capped. The current API opens at most 10 primary and 10 replica pool connections; each of the seven worker roles opens at most 3 primary and 3 replica connections, for an upper bound of 62 connections when the replica URL points at the primary. The local worker supervisor is not container-limited yet; the 1.2 GB worker budget remains to be measured under load before deployment.
+**CPU is the likelier constraint.** Rough peak shares of 2 vCPU: Postgres 0.5-0.7, sender and fan-out 0.5-0.8, API and web 0.3-0.5, analytics and observability 0.3-0.4. Peaks overlap, so priorities apply: the sender is capped at `cpus: 1.0` in the future container deployment, the API and web get a higher `cpu_shares`, and sender concurrency is capped. The current API opens at most 10 primary and 10 replica pool connections; each of the eight worker roles opens at most 3 primary connections, and the tracking listener opens at most 2, for a total upper bound of 46 connections. The local worker supervisor is not container-limited yet; the worker and tracking budgets remain to be measured under load before deployment.
 
 `sustainable sends per second = vCPUs available to the send path / CPU-seconds per email`. Measure CPU milliseconds per email early (Phase 2). If the measured value does not support 1,000 per second on this VM, publish the measured number as the target instead of hiding it. Load generators (k6) run from a separate machine.
 
@@ -260,7 +261,7 @@ flowchart LR
 ### Principles
 - **Only Postgres is durable truth.** Redis and ClickHouse can be rebuilt. Queues carry work, not truth.
 - **Webhooks are verified, stored, enqueued, then acknowledged,** so a slow handler never makes a sender retry.
-- **The tracking path never depends on ClickHouse.** A click always redirects.
+- **The tracking path never depends on ClickHouse.** A valid click redirects when its stored target can be resolved from PostgreSQL.
 - **The database holds the schedule.** The queue only contains work that is due.
 - **Providers sit behind interfaces** (email, queue, object storage), so the same code runs in the demo and the production blueprint.
 

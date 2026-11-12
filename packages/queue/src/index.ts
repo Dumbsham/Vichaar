@@ -56,6 +56,19 @@ export const hookMessage = z.object({
   eventId: uuid,
   correlationId: z.string().max(64),
 });
+export const trackEvent = z.object({
+  eventId: uuid,
+  publicationId: uuid,
+  postId: uuid,
+  subscriptionId: uuid,
+  linkId: uuid.nullable(),
+  eventType: z.enum(['open', 'click']),
+  isPrefetch: z.boolean(),
+  occurredAt: z.string().datetime(),
+  correlationId: z.string().max(64),
+});
+export const trackMessage = z.object({ type: z.literal('TrackBatch'), events: z.array(trackEvent).min(1).max(100) });
+export type TrackEvent = z.infer<typeof trackEvent>;
 export type HookMessage = z.infer<typeof hookMessage>;
 export type EventMessage = z.infer<typeof eventMessage>;
 export type SendMessage = z.infer<typeof sendMessage>;
@@ -91,6 +104,7 @@ export function createSqsQueues(config: {
   eventsName?: string;
   sendsName?: string;
   hooksName?: string;
+  tracksName?: string;
 }) {
   const client = new SQSClient({
     region: config.region,
@@ -100,6 +114,7 @@ export function createSqsQueues(config: {
   const eventsName = config.eventsName ?? 'vichaar-events';
   const sendsName = config.sendsName ?? 'vichaar-sends';
   const hooksName = config.hooksName ?? 'vichaar-hooks';
+  const tracksName = config.tracksName ?? 'vichaar-tracks';
   function makeQueue<T>(name: string, schema: z.ZodType<T>, receiveBatch = 10): Queue<T> {
     const url = `${config.baseUrl.replace(/\/$/, '')}/${name}`;
     return {
@@ -159,14 +174,15 @@ export function createSqsQueues(config: {
     events: makeQueue(eventsName, eventMessage),
     sends: makeQueue(sendsName, sendMessage, 1),
     hooks: makeQueue(hooksName, hookMessage, 1),
+    tracks: makeQueue(tracksName, trackMessage, 10),
     async createLocalQueues() {
       localOnly();
-      for (const name of [eventsName, sendsName, hooksName])
+      for (const name of [eventsName, sendsName, hooksName, ...(config.tracksName ? [tracksName] : [])])
         await client.send(new CreateQueueCommand({ QueueName: name }));
     },
     async deleteLocalQueues() {
       localOnly();
-      for (const name of [eventsName, sendsName, hooksName])
+      for (const name of [eventsName, sendsName, hooksName, ...(config.tracksName ? [tracksName] : [])])
         await client.send(
           new DeleteQueueCommand({ QueueUrl: `${config.baseUrl.replace(/\/$/, '')}/${name}` }),
         );
