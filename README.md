@@ -1,6 +1,12 @@
 <div align="center">
 
-# Vichaar
+<pre>
+██      ██  ██████████    ████████  ██      ██    ██████      ██████    ████████  
+██      ██      ██      ██          ██      ██  ██      ██  ██      ██  ██      ██
+██      ██      ██      ██          ██████████  ██████████  ██████████  ████████  
+  ██  ██        ██      ██          ██      ██  ██      ██  ██      ██  ██    ██  
+    ██      ██████████    ████████  ██      ██  ██      ██  ██      ██  ██      ██
+</pre>
 
 **A newsletter platform for Indian writers, built with reliability in mind.**
 
@@ -122,7 +128,8 @@ docs/              Design, flows, threat model, failure analysis, ADRs
 - [x] Phase 3: CDN-compatible headers, Redis public-preview cache, and working read replica
 - [x] Phase 4: Razorpay test-mode subscriptions, webhooks, and paywall
 - [x] Phase 5: open/click tracking and ClickHouse analytics pipeline (local load result in `docs/benchmarks.md`)
-- [ ] Later phases: quote cards, milestones, observability, load and chaos measurements, Next.js frontend, deployment blueprint
+- [x] Phase 6: language-aware quote cards, milestones, and IST writing streak verification
+- [ ] Later phases: remaining observability, load and chaos measurements, Next.js frontend, deployment blueprint
 
 The detailed sequence and scope are in [docs/MasterPlan.md](docs/MasterPlan.md). Custom domains and CSV subscriber import are outside the v1 scope.
 
