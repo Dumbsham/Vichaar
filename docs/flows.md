@@ -8,7 +8,7 @@ Sections 1.1–1.7 are implemented for local API and worker processes. A subscri
 
 The delivery partition key is fixed from `posts.delivery_month` at publish time and remains unchanged when `send_at` moves. The scheduler rotates through up to 20 due publications per tick using a locked durable cursor, claims up to 100 rows per publication, and observes the daily IST budget. The sender marks explicit SMTP 4xx rejections pending with bounded backoff (up to five claims), explicit 5xx rejections failed with a tenant suppression, and ambiguous transport failures `failed: unknown_outcome`. The sweeper processes at most 1,000 stale rows per pass and removes up to 1,000 old published outbox rows.
 
-The sender now includes an open pixel and rewrites stored post-body links to signed tracking redirects. The read-online and unsubscribe/preferences links remain direct. Bounce/complaint ingestion and platform-wide suppression remain later work. Worker metrics are available from port 9100; OTLP traces are emitted when `OTEL_EXPORTER_OTLP_ENDPOINT` is configured. Alert rules and container deployment are still planned.
+The sender now includes an open pixel and rewrites stored post-body links to signed tracking redirects. The read-online and unsubscribe/preferences links remain direct. Bounce/complaint ingestion and platform-wide suppression remain later work. Worker metrics are available from port 9100; OTLP traces are emitted when `OTEL_EXPORTER_OTLP_ENDPOINT` is configured. Phase 7 alert rules are in `infra/monitoring/alerts.yml`; Prometheus deployment is part of the later deployment blueprint.
 
 **Conventions**
 - Postgres is the source of truth. Queues carry work, not truth.

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { verifyPostDeliveriesPartitions } from '@vichaar/db';
+import { logger } from '@vichaar/api/logger';
 import { createWorkerContainer } from './container.js';
 
 const config = z
@@ -134,6 +135,7 @@ async function main() {
         if (config.WORKER_ROLE === 'webhooks') metrics.increment('webhook_processed_total', result);
         if (config.WORKER_ROLE === 'reconciliation')
           metrics.increment('reconciliation_checked_total', result);
+        if (config.WORKER_ROLE === 'analytics') metrics.increment('analytics_events_total', result);
       } else {
         metrics.increment('sweeper_unknown_outcome_total', result.unknown);
         metrics.increment('sweeper_requeued_total', result.requeued);
@@ -143,24 +145,17 @@ async function main() {
         const cpu = process.cpuUsage(cpuStarted);
         metrics.increment('sender_cpu_ms_total', (cpu.user + cpu.system) / 1000);
       }
-      console.log(
-        JSON.stringify({ worker: config.WORKER_ROLE, result, durationMs: Date.now() - started }),
-      );
+      logger.info({ worker: config.WORKER_ROLE, result, durationMs: Date.now() - started }, 'worker run completed');
     } catch (error) {
       metrics.increment('worker_errors_total');
-      console.error(
-        JSON.stringify({
-          worker: config.WORKER_ROLE,
-          error: error instanceof Error ? error.message : 'unknown',
-        }),
-      );
+      logger.error({ worker: config.WORKER_ROLE, errorType: error instanceof Error ? error.name : 'unknown' }, 'worker run failed');
     }
     if (running) await new Promise<void>((resolve) => setTimeout(resolve, role.interval));
   }
 }
 main()
   .catch((error: unknown) => {
-    console.error(error);
+    logger.error({ worker: config.WORKER_ROLE, errorType: error instanceof Error ? error.name : 'unknown' }, 'worker startup failed');
     process.exitCode = 1;
   })
   .finally(async () => {

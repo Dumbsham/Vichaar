@@ -71,6 +71,9 @@ jobs:
           done
           exit 1
 
+      - name: Pull isolated ClickHouse chaos image
+        run: docker pull clickhouse/clickhouse-server:24.3-alpine
+
       - name: Run Tests (including boundary fixture)
         run: pnpm test
 

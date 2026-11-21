@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import { pinoHttp } from 'pino-http';
 import type { IncomingMessage } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { trace, SpanStatusCode } from '@opentelemetry/api';
 import { ZodError, z } from 'zod';
 import {
   AppError,
@@ -15,6 +16,7 @@ import {
 } from '@vichaar/shared/errors';
 import type { AppContainer } from './container.js';
 import { logger } from './shared/logger.js';
+import { createRequestMetrics } from './shared/request-metrics.js';
 import { createHealthRouter } from './modules/health/index.js';
 import { createAuthRouter } from './modules/auth/index.js';
 import { createPublicationRouter } from './modules/publications/index.js';
@@ -35,6 +37,8 @@ import { createMilestoneRouter } from './modules/milestones/index.js';
 
 export function createServer(container: AppContainer): Express {
   const app = express();
+  const requestMetrics = createRequestMetrics();
+  const tracer = trace.getTracer('vichaar.api');
 
   const trustedProxy = process.env.TRUST_PROXY?.trim();
 
@@ -56,6 +60,25 @@ export function createServer(container: AppContainer): Express {
       genReqId: (req: IncomingMessage) => req.headers['x-correlation-id'] as string,
     }),
   );
+  app.use((req, res, next) => {
+    const finish = requestMetrics.begin();
+    tracer.startActiveSpan('http.request', (span) => {
+      span.setAttribute('http.request.method', req.method);
+      span.setAttribute('vichaar.correlation_id', String(req.headers['x-correlation-id']));
+      let completed = false;
+      const complete = (statusCode: number) => {
+        if (completed) return;
+        completed = true;
+        finish(statusCode);
+        span.setAttribute('http.response.status_code', statusCode);
+        if (statusCode >= 500) span.setStatus({ code: SpanStatusCode.ERROR });
+        span.end();
+      };
+      res.once('finish', () => complete(res.statusCode));
+      res.once('close', () => complete(res.writableFinished ? res.statusCode : 499));
+      next();
+    });
+  });
   app.use(helmet());
   app.use(cors({ origin: process.env.CORS_ORIGIN ?? false, credentials: true }));
   app.use(async (req, _res, next) => {
@@ -139,14 +162,17 @@ export function createServer(container: AppContainer): Express {
     res
       .type('text/plain; version=0.0.4')
       .send(
-        `vichaar_preview_cache_hits_total ${stats.hits}\n` +
+        requestMetrics.prometheus() +
+          `vichaar_preview_cache_hits_total ${stats.hits}\n` +
           `vichaar_preview_cache_misses_total ${stats.misses}\n` +
+          `vichaar_preview_cache_hit_ratio ${stats.hits + stats.misses ? stats.hits / (stats.hits + stats.misses) : 0}\n` +
           `vichaar_preview_cache_redis_errors_total ${stats.redisErrors}\n` +
           (billing
             ? `vichaar_billing_checkouts_total ${billing.checkouts}\n` +
               `vichaar_billing_webhooks_received_total ${billing.webhooks}\n` +
               `vichaar_entitlement_cache_hits_total ${billing.cacheHits}\n` +
               `vichaar_entitlement_db_checks_total ${billing.dbChecks}\n` +
+              `vichaar_entitlement_cache_hit_ratio ${billing.cacheHits + billing.dbChecks ? billing.cacheHits / (billing.cacheHits + billing.dbChecks) : 0}\n` +
               `vichaar_entitlement_redis_errors_total ${billing.redisErrors}\n`
             : '') +
           (quotes ? `vichaar_quote_cards_rendered_total ${quotes.rendered}\n` +

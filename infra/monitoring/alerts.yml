@@ -1,0 +1,36 @@
+groups:
+  - name: vichaar-phase7
+    rules:
+      - alert: VichaarApiErrorRate
+        expr: sum(rate(vichaar_api_errors_total[5m])) / clamp_min(sum(rate(vichaar_api_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: API responses have exceeded 5% server errors for five minutes.
+      - alert: VichaarSendQueueBacklog
+        expr: vichaar_queue_depth{worker="sender"} > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Send queue depth is above the scheduler backpressure threshold.
+      - alert: VichaarUnknownEmailOutcome
+        expr: (sum(increase(vichaar_sender_unknown_outcome_total{worker="sender"}[5m])) or vector(0)) + (sum(increase(vichaar_sweeper_unknown_outcome_total{worker="sweeper"}[5m])) or vector(0)) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: At least one email has an ambiguous outcome and needs manual review.
+      - alert: VichaarTrackingDroppedEvents
+        expr: increase(vichaar_tracking_dropped_total[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Tracking events were dropped while redirects continued.
+      - alert: VichaarWebhookWorkerErrors
+        expr: increase(vichaar_worker_errors_total{worker="webhooks"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Razorpay webhook processing is failing.

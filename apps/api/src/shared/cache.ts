@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createClient } from 'redis';
 import { z } from 'zod';
+import { withExternalSpan } from './tracing.js';
 
 const previewSchema = z.object({
   id: z.string().uuid(), publicationId: z.string().uuid(), slug: z.string(), language: z.string(),
@@ -44,7 +45,7 @@ export function createPreviewCache(redisUrl: string, now: () => number = Date.no
   }
   async function read(key: string): Promise<z.infer<typeof entrySchema> | null> {
     try {
-      const raw = await bounded((await redis()).get(key));
+      const raw = await withExternalSpan('redis.preview.get', async () => bounded((await redis()).get(key)));
       return raw ? entrySchema.parse(JSON.parse(raw)) : null;
     } catch { counters.redisErrors++; return null; }
   }
@@ -55,7 +56,7 @@ export function createPreviewCache(redisUrl: string, now: () => number = Date.no
     const lockKey = `${key}:lock`;
     const token = randomUUID();
     let ownsLock = false;
-    try { ownsLock = (await bounded((await redis()).set(lockKey, token, { NX: true, PX: 2000 }))) === 'OK'; }
+    try { ownsLock = (await withExternalSpan('redis.preview.lock', async () => bounded((await redis()).set(lockKey, token, { NX: true, PX: 2000 })))) === 'OK'; }
     catch { /* Database fallback when Redis is unavailable. */ }
     if (!ownsLock && stale) return stale.value;
     if (!ownsLock) {
@@ -69,13 +70,13 @@ export function createPreviewCache(redisUrl: string, now: () => number = Date.no
       const value = previewSchema.parse(await load());
       try {
         const ttl = 60 + Math.floor(Math.random() * 15);
-        await bounded((await redis()).set(key, JSON.stringify({ value, freshUntil: now() + ttl * 1000 }), { EX: ttl + 300 }));
+        await withExternalSpan('redis.preview.set', async () => bounded((await redis()).set(key, JSON.stringify({ value, freshUntil: now() + ttl * 1000 }), { EX: ttl + 300 })));
       } catch { /* Cache failure must not break public reads. */ }
       return value;
     } finally {
       if (ownsLock) {
         try {
-          await bounded((await redis()).eval("if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end", { keys: [lockKey], arguments: [token] }));
+          await withExternalSpan('redis.preview.unlock', async () => bounded((await redis()).eval("if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end", { keys: [lockKey], arguments: [token] })));
         } catch { /* Lock expires automatically. */ }
       }
     }
@@ -89,7 +90,7 @@ export function createPreviewCache(redisUrl: string, now: () => number = Date.no
       return work;
     },
     async invalidate(key) {
-      try { await bounded((await redis()).del(key)); } catch { /* TTL bounds stale content during Redis outage. */ }
+      try { await withExternalSpan('redis.preview.invalidate', async () => bounded((await redis()).del(key))); } catch { /* TTL bounds stale content during Redis outage. */ }
     },
     stats() { return { ...counters }; },
     async close() { if (client.isOpen) client.destroy(); },

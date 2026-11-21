@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { analyticsStat } from './schemas.js';
+import { withExternalSpan } from '@vichaar/api/tracing';
 
 export function createAnalyticsRepository(
   url: string,
@@ -21,11 +22,11 @@ export function createAnalyticsRepository(
         user && password
           ? { Authorization: `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}` }
           : undefined;
-      const response = await fetcher(endpoint, {
+      const response = await withExternalSpan('clickhouse.analytics.query', () => fetcher(endpoint, {
         method: 'POST',
         headers: credentials,
         signal: AbortSignal.timeout(5000),
-      });
+      }));
       if (!response.ok) throw new Error('Analytics unavailable');
       const text = await response.text();
       return text.trim()

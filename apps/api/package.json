@@ -6,6 +6,8 @@
   "main": "./src/index.ts",
   "exports": {
     "./rate-limiter": "./src/shared/rate-limiter.ts",
+    "./tracing": "./src/shared/tracing.ts",
+    "./logger": "./src/shared/logger.ts",
     "./billing": "./src/modules/billing/index.ts",
     "./publications": "./src/modules/publications/index.ts",
     "./quote-cards": "./src/modules/quote-cards/index.ts"

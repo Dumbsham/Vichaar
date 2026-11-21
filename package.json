@@ -15,7 +15,7 @@
     "test:boundary-fixture": "vitest run tests/boundary-rule.test.ts",
     "lint": "eslint . && turbo typecheck",
     "format": "prettier --write .",
-    "loadtest": "echo \"Load tests run via k6\"",
+    "loadtest": "LOG_LEVEL=error tsx loadtests/send-500k.js && LOG_LEVEL=error tsx loadtests/slots.js",
     "chaos": "pnpm test chaos/"
   },
   "devDependencies": {
@@ -23,6 +23,7 @@
     "@vichaar/queue": "workspace:*",
     "@vichaar/shared": "workspace:*",
     "@eslint/js": "^9.15.0",
+    "express": "^5.0.0",
     "@types/node": "^20.11.1",
     "eslint": "^9.15.0",
     "prettier": "^3.3.3",

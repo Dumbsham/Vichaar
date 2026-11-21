@@ -70,4 +70,4 @@ Status: draft v1. For each component: what happens when it is **down**, **slow**
 - Tracking events dropped above 0
 
 ## Tests (chaos suite)
-Kill the sender mid-send, replay and reorder webhooks, stop Redis, stop ClickHouse during a click storm, throttle the provider, stop the queue during a publish, pause the replica. Each maps to a row above.
+The sender crash, webhook replay/reordering, isolated Redis stop, and isolated ClickHouse stop/recovery tests are implemented. The Redis test proves public previews and paid bodies still load from PostgreSQL. The ClickHouse test proves 1,000 verified clicks continue redirecting and queued events reach ClickHouse after restart. Provider throttling, queue outage during publish, and replica pause remain future failure scenarios. Phase 7 Prometheus rules in `infra/monitoring/alerts.yml` cover API errors, send backlog, unknown outcomes, tracking drops, and webhook worker errors; a monitoring service is not deployed yet.

@@ -570,6 +570,8 @@ Summarized here, detailed in [failure-analysis.md](failure-analysis.md). Readers
 
 The Phase 4 API exposes billing checkout/webhook totals and entitlement cache hit, database fallback, and Redis error counters at `/metrics`. The hooks worker exposes processed count, error count, latency, and HookQ depth; reconciliation exposes checked count and errors. Alert on a nonempty HookQ DLQ, sustained hook-worker errors, or no successful reconciliation for more than two hours once monitoring is deployed.
 
+Phase 7 adds API request totals, 5xx totals, in-flight count and duration buckets; preview and entitlement cache hit ratios; worker analytics and milestone counters; and sender CPU milliseconds per email. API and worker logs use Pino JSON with correlation IDs on queue processing and redact response session cookies. Optional OTLP spans cover HTTP requests, Redis cache/entitlement calls, PostgreSQL delivery and entitlement calls, SQS calls, ClickHouse queries, email and Razorpay calls. `infra/monitoring/alerts.yml` contains rules for metrics already emitted, but there is no Prometheus/collector service in the local demo yet. The local 500,000-row stub benchmark and 1,000-row slot benchmark are in `docs/benchmarks.md`; neither establishes throughput on the planned 2 vCPU host or with real SES. The scheduler's 100 rows per publication per 15 seconds and provider limits are intentional production caps and remain below the 1,000-emails/s design target.
+
 ## Testing
 
 - **Unit tests** for pure logic: `computeSendAt` with a fake clock across timezones, entitlement rules, token signing.

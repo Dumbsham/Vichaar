@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Queue, TrackEvent } from '@vichaar/queue';
+import { withSpan } from './tracing.js';
 
 type TrackQueue = Queue<{ type: 'TrackBatch'; events: TrackEvent[] }>;
 const row = z.object({
@@ -28,12 +29,12 @@ export function createAnalyticsPipeline(config: {
             Authorization: `Basic ${Buffer.from(`${config.user}:${config.password}`).toString('base64')}`,
           }
         : undefined;
-    const response = await fetcher(url, {
+    const response = await withSpan('clickhouse.analytics.query', null, () => fetcher(url, {
       method: 'POST',
       body,
       headers: credentials,
       signal: AbortSignal.timeout(5000),
-    });
+    }));
     if (!response.ok) throw new Error(`ClickHouse returned ${response.status}`);
     return response.text();
   }

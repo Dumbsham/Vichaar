@@ -20,7 +20,12 @@ export function createWorkerMetrics(role: string, port: number) {
     'sweeper_outbox_purged_total',
     'webhook_processed_total',
     'reconciliation_checked_total',
+    'analytics_events_total',
+    'milestones_created_total',
+    'milestone_notifications_sent_total',
+    'milestone_notifications_failed_total',
   ]);
+  for (const name of allowed) counters.set(name, 0);
   const server: Server = createServer((req, res) => {
     if (req.url !== '/metrics') {
       res.writeHead(404).end();
@@ -29,6 +34,11 @@ export function createWorkerMetrics(role: string, port: number) {
     const lines = [...counters.entries(), ...gauges.entries()].map(
       ([name, value]) => `vichaar_${name}{worker="${role}"} ${value}`,
     );
+    if (role === 'sender') {
+      const emails = counters.get('sender_emails_total') ?? 0;
+      const cpu = counters.get('sender_cpu_ms_total') ?? 0;
+      lines.push(`vichaar_sender_cpu_ms_per_email{worker="sender"} ${emails ? cpu / emails : 0}`);
+    }
     res
       .writeHead(200, { 'content-type': 'text/plain; version=0.0.4' })
       .end(`${lines.join('\n')}\n`);

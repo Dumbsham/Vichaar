@@ -7,6 +7,7 @@ import type { WorkerMetrics } from './metrics.js';
 import { withSpan } from './tracing.js';
 import { signTrackingToken } from '@vichaar/shared';
 import type { ObjectStorage } from '@vichaar/api/quote-cards';
+import { logger } from '@vichaar/api/logger';
 
 export interface PipelineDeps {
   repo: DeliveryRepository;
@@ -106,7 +107,7 @@ export function createPipeline(deps: PipelineDeps) {
                     correlationId: event.correlationId,
                   }
                 : event;
-            const next = await repo.fanout(input);
+            const next = await withSpan('postgres.delivery.fanout', event.correlationId, () => repo.fanout(input));
             if (next)
               await events.send({
                 type: 'FanoutPage',
@@ -119,16 +120,17 @@ export function createPipeline(deps: PipelineDeps) {
               });
           }
           await events.delete(message.receipt);
+          logger.info({ worker: 'fanout', eventType: event.type, correlationId: event.correlationId }, 'event processed');
         });
       }
       return messages.length;
     },
     async scheduleOnce(): Promise<number> {
-      await repo.releaseScheduled();
+      await withSpan('postgres.delivery.release_scheduled', null, () => repo.releaseScheduled());
       const depth = await sends.depth();
       deps.metrics?.setQueueDepth(depth);
       if (depth > 10_000) return 0;
-      const keys = await repo.queueDue();
+      const keys = await withSpan('postgres.delivery.queue_due', null, () => repo.queueDue());
       for (const batch of group(keys, 100))
         await sends.send({
           type: 'SendBatch',
@@ -141,7 +143,7 @@ export function createPipeline(deps: PipelineDeps) {
       const messages = await sends.receive();
       for (const message of messages) {
         await withSpan('worker.send_batch', message.body.correlationId, async () => {
-          const rows = await repo.claim(message.body.keys);
+          const rows = await withSpan('postgres.delivery.claim', message.body.correlationId, () => repo.claim(message.body.keys));
           const links = rows.length ? await repo.trackedLinks(message.body.keys) : [];
           const linkIds = new Map(links.map((link) => [`${link.publication_id}:${link.post_id}:${link.target_url}`, link.id]));
           const results: SendResult[] = [];
@@ -232,7 +234,7 @@ export function createPipeline(deps: PipelineDeps) {
             );
             results.push(...groupResults);
           }
-          await repo.record(results);
+          await withSpan('postgres.delivery.record', message.body.correlationId, () => repo.record(results));
           deps.metrics?.increment('sender_emails_total', results.length);
           for (const result of results) {
             if (result.status === 'sent') deps.metrics?.increment('sender_sent_total');
@@ -243,6 +245,7 @@ export function createPipeline(deps: PipelineDeps) {
               deps.metrics?.increment('sender_unknown_outcome_total');
           }
           await sends.delete(message.receipt);
+          logger.info({ worker: 'sender', correlationId: message.body.correlationId, sent: results.filter((result) => result.status === 'sent').length, failed: results.filter((result) => result.status === 'failed').length }, 'send batch processed');
         });
       }
       return messages.length;

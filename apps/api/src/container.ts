@@ -55,6 +55,7 @@ export interface AppContainer {
 export interface ContainerConfig {
   databaseUrl: string;
   databaseReplicaUrl?: string;
+  redisUrl?: string;
   rateLimitNamespace?: string;
   billingProvider?: BillingProvider;
   enqueueHook?: (id: string, correlationId: string) => Promise<void>;
@@ -72,6 +73,7 @@ export function createContainer(config: ContainerConfig): AppContainer {
     replicaUrl: config.databaseReplicaUrl,
   });
   const clock = new SystemClock();
+  const redisUrl = config.redisUrl ?? process.env.REDIS_URL ?? 'redis://localhost:6379';
   const healthService = createHealthService({
     healthRepo: createHealthRepository({ pool: db.primaryPool }),
   });
@@ -90,11 +92,11 @@ export function createContainer(config: ContainerConfig): AppContainer {
   });
   const analyticsService = createAnalyticsService({ publicationService: billingPublicationService, repo: createAnalyticsRepository(process.env.CLICKHOUSE_URL ?? 'http://localhost:8123', process.env.CLICKHOUSE_DB ?? 'vichaar', process.env.CLICKHOUSE_USER, process.env.CLICKHOUSE_PASSWORD) });
   const rateLimiter = createRateLimiter(
-    process.env.REDIS_URL ?? 'redis://localhost:6379',
+    redisUrl,
     Date.now,
     config.rateLimitNamespace,
   );
-  const previewCache = createPreviewCache(process.env.REDIS_URL ?? 'redis://localhost:6379');
+  const previewCache = createPreviewCache(redisUrl);
   const provider =
     config.billingProvider ??
     (process.env.RAZORPAY_KEY_ID?.startsWith('rzp_test_') && process.env.RAZORPAY_KEY_SECRET
@@ -113,7 +115,7 @@ export function createContainer(config: ContainerConfig): AppContainer {
         provider,
         publicationService: billingPublicationService,
         clock,
-        redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
+        redisUrl,
         keyId: process.env.RAZORPAY_KEY_ID ?? 'rzp_test_stub',
       })
     : undefined;

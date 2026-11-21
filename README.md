@@ -17,7 +17,7 @@
 
 </div>
 
-> **Current status:** Phases 1–6 are implemented locally. The Phase 5 tracking path passed a 1,000 requests/second local k6 run; the planned 2 vCPU demo capacity remains unverified. Razorpay requests need your own test keys; automated tests use a stub provider. The Next.js app and deployment containers are later phases.
+> **Current status:** Phases 1–7 are implemented locally. Phase 7 added metrics, traces, failure tests, and measured stub delivery and slot benchmarks. The planned 2 vCPU demo capacity and production email throughput remain unverified. Razorpay requests need your own test keys; automated tests use a stub provider. The Next.js app and deployment containers are later phases.
 
 ## What works today
 
@@ -103,13 +103,13 @@ pnpm lint
 REDIS_TEST_URL=redis://localhost:6379 pnpm test
 ```
 
-`pnpm lint` runs ESLint and TypeScript checks. `pnpm test` runs Vitest, including API, delivery, and webhook chaos tests against real PostgreSQL, Redis, and ElasticMQ with stub email and Razorpay providers. Chaos tests use isolated local queues. Setting `REDIS_TEST_URL` also runs the shared Redis rate-limit test. Run `pnpm db:migrate` first. Test counts can change as the project grows.
+`pnpm lint` runs ESLint and TypeScript checks. `pnpm test` runs Vitest, including API, delivery, and chaos tests against real PostgreSQL, Redis, ElasticMQ and isolated Redis/ClickHouse containers with stub providers. The chaos tests need local Docker access. Setting `REDIS_TEST_URL` also runs the shared Redis rate-limit test. Run `pnpm db:migrate` first. `pnpm loadtest` runs the 500,000-recipient stub delivery and 1,000-recipient slot timing benchmarks against temporary local databases; allow several minutes. Test counts can change as the project grows.
 
 ## Design direction
 
 Vichaar is a modular monolith with separate delivery workers. PostgreSQL holds durable state; Redis is for rate limits and public preview caching. Domain changes are recorded in a transactional outbox and relayed through an SQS-compatible queue. The implemented delivery flow is outbox relay → subscriber fan-out → slot scheduler → sender, with an atomic delivery claim before an email is sent. Ambiguous send outcomes are flagged rather than automatically retried. Open and click events are batched into ClickHouse without per-event PostgreSQL writes.
 
-The design targets include 500,000 recipients for one send, 1,000 emails per second, cache-first post reads, and operation on a 2 vCPU / 12 GB demo machine. These are **unverified targets**. The calculations, resource budget, and tradeoffs are in [docs/design.md](docs/design.md); recorded results from real runs are in [docs/benchmarks.md](docs/benchmarks.md).
+The design targets include 500,000 recipients for one send, 1,000 emails per second, cache-first post reads, and operation on a 2 vCPU / 12 GB demo machine. The local raw stub pipeline exceeded 1,000 emails/s, but the demo scheduler and provider limits remain below that target; the 2 vCPU deployment is unverified. The calculations, resource budget, and tradeoffs are in [docs/design.md](docs/design.md); recorded results from real runs are in [docs/benchmarks.md](docs/benchmarks.md).
 
 The local [Compose file](infra/compose/docker-compose.yml) defines PostgreSQL, a second PostgreSQL container, Redis, ElasticMQ, ClickHouse, and Mailpit. The API and workers run as local Node processes during this phase. The second PostgreSQL container is a working streaming read replica in the local Compose stack. Caddy, API/web/worker containers, an OpenTelemetry collector, and the Terraform production blueprint remain future work. No live demo or production deployment is claimed here.
 
@@ -136,7 +136,8 @@ docs/              Design, flows, threat model, failure analysis, ADRs
 - [x] Phase 4: Razorpay test-mode subscriptions, webhooks, and paywall
 - [x] Phase 5: open/click tracking and ClickHouse analytics pipeline (local load result in `docs/benchmarks.md`)
 - [x] Phase 6: language-aware quote cards, milestones, and IST writing streak verification
-- [ ] Later phases: remaining observability, load and chaos measurements, Next.js frontend, deployment blueprint
+- [x] Phase 7: metrics, tracing, logging redaction, Redis and ClickHouse chaos, stub delivery and slot benchmarks
+- [ ] Phase 8: Next.js frontend and deployment blueprint
 
 The detailed sequence and scope are in [docs/MasterPlan.md](docs/MasterPlan.md). Custom domains and CSV subscriber import are outside the v1 scope.
 

@@ -4,6 +4,7 @@ import type { Clock } from '@vichaar/shared/clock';
 import type { PublicationService } from '../publications/index.js';
 import type { BillingProvider } from './provider.js';
 import type { BillingRepository, PaidRow } from './repository.js';
+import { withExternalSpan } from '@vichaar/api/tracing';
 
 export interface BillingService {
   checkout(subdomain: string, userId: string, email: string): Promise<object>;
@@ -79,7 +80,7 @@ export function createBillingService({
   }
   async function invalidate(publicationId: string, userId: string) {
     try {
-      await bounded((await bounded(cache())).del(key(publicationId, userId)));
+      await withExternalSpan('redis.entitlement.invalidate', async () => bounded((await bounded(cache())).del(key(publicationId, userId))));
     } catch {
       counts.redisErrors++;
       if (redis.isOpen) redis.destroy();
@@ -123,7 +124,7 @@ export function createBillingService({
     },
     async isEntitled(publicationId, userId) {
       try {
-        const value = await bounded((await bounded(cache())).get(key(publicationId, userId)));
+        const value = await withExternalSpan('redis.entitlement.get', async () => bounded((await bounded(cache())).get(key(publicationId, userId))));
         if (value === '1' || value === '0') {
           counts.cacheHits++;
           return value === '1';
@@ -135,7 +136,7 @@ export function createBillingService({
       let allowed: boolean;
       try {
         counts.dbChecks++;
-        allowed = await repo.isEntitled(publicationId, userId);
+        allowed = await withExternalSpan('postgres.entitlement.check', () => repo.isEntitled(publicationId, userId));
       } catch {
         throw new AppError(
           'Paid access is temporarily unavailable',
@@ -144,9 +145,9 @@ export function createBillingService({
         );
       }
       try {
-        await bounded(
+        await withExternalSpan('redis.entitlement.set', async () => bounded(
           (await bounded(cache())).set(key(publicationId, userId), allowed ? '1' : '0', { EX: 60 }),
-        );
+        ));
       } catch {
         counts.redisErrors++;
         if (redis.isOpen) redis.destroy();
