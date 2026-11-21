@@ -144,6 +144,7 @@ The detailed sequence and scope are in [docs/MasterPlan.md](docs/MasterPlan.md).
 ## Project documents
 
 - [System design](docs/design.md) — requirements, capacity assumptions, data model, resource budget
+- [Frontend phase plan](docs/frontend-phase-plan.md) — simple editorial design, screen sequence, API gaps, and release checks
 - [Flows](docs/flows.md) — publish, delivery, billing, tracking, and other planned paths
 - [Threat model](docs/threat-model.md) and [failure analysis](docs/failure-analysis.md)
 - [Architecture decision records](docs/adr/)

@@ -328,6 +328,8 @@ Implement OpenTelemetry, Prometheus metrics, structured logs, and remaining infr
 ### Phase 8: Next.js Frontend & Production Deployment Blueprint
 Implement the full Next.js web application and the production Terraform blueprint.
 
+The frontend implementation is broken into reviewable phases in [frontend-phase-plan.md](frontend-phase-plan.md). The deployment blueprint remains a separate Phase 8 track.
+
 - Next.js Web App (`apps/web`):
   - App Router, Tailwind CSS.
   - Reader views: publication landing page, post view, slot selector, double opt-in confirmation, paywall preview with Razorpay checkout button.
