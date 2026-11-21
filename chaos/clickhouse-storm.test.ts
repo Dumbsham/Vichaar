@@ -45,7 +45,7 @@ afterAll(async () => {
   if (db) await db.close();
   if (queueCreated) await queues.deleteLocalQueues();
   queues.close();
-  if (databaseCreated) await admin.primaryPool.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
+  if (databaseCreated) await admin.primaryPool.query(`DROP DATABASE IF EXISTS ${databaseName}`);
   await admin.close();
   if (clickhouse) await clickhouse.remove();
 }, 90_000);

@@ -37,7 +37,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (container) await container.close();
-  await admin.primaryPool.query(`DROP DATABASE IF EXISTS ${databaseName} WITH (FORCE)`);
+  await admin.primaryPool.query(`DROP DATABASE IF EXISTS ${databaseName}`);
   await admin.close();
   if (redis) await redis.remove();
 }, 60_000);
