@@ -36,7 +36,8 @@
   },
   "pnpm": {
     "overrides": {
-      "body-parser": "^2.4.0"
+      "body-parser": "^2.4.0",
+      "fflate": "0.7.5"
     }
   },
   "engines": {
