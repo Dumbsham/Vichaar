@@ -42,6 +42,7 @@ const config = z
       z.string().url().optional(),
     ),
     METRICS_BASE_PORT: z.coerce.number().int().positive().default(9100),
+    QUOTE_CARD_DIR: z.string().min(1).default('./data/quote-cards'),
   })
   .parse(process.env);
 if (
@@ -83,6 +84,7 @@ const worker = createWorkerContainer({
   razorpayKeySecret: config.RAZORPAY_KEY_SECRET,
   metricsBasePort: config.METRICS_BASE_PORT,
   otlpEndpoint: config.OTEL_EXPORTER_OTLP_ENDPOINT,
+  quoteCardDir: config.QUOTE_CARD_DIR,
 });
 const { database, queues, metrics, pipeline, billing, analytics } = worker;
 const roles = {

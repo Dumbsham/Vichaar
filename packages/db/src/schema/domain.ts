@@ -142,6 +142,24 @@ export const writingStreaks = pgTable('writing_streaks', {
   lastPostWeek: date('last_post_week'),
 });
 
+export const milestones = pgTable('milestones', {
+  publicationId: uuid('publication_id').notNull().references(() => publications.id, { onDelete: 'cascade' }),
+  kind: text('kind').notNull(),
+  threshold: integer('threshold').notNull(),
+  createdAt: utc('created_at').notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.publicationId, table.kind, table.threshold] })]);
+
+export const quoteCards = pgTable('quote_cards', {
+  publicationId: uuid('publication_id').notNull().references(() => publications.id, { onDelete: 'cascade' }),
+  postId: uuid('post_id').notNull().references(() => posts.id, { onDelete: 'cascade' }),
+  quoteHash: text('quote_hash').notNull(),
+  storageKey: text('storage_key').notNull(),
+  createdAt: utc('created_at').notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.postId, table.quoteHash] }),
+  index('quote_cards_publication_post_idx').on(table.publicationId, table.postId),
+]);
+
 export const subscriptions = pgTable(
   'subscriptions',
   {

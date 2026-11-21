@@ -30,6 +30,8 @@ import {
   subscribeSchema,
 } from './modules/subscriptions/index.js';
 import { createAnalyticsRouter } from './modules/analytics/index.js';
+import { createQuoteCardRouter } from './modules/quote-cards/index.js';
+import { createMilestoneRouter } from './modules/milestones/index.js';
 
 export function createServer(container: AppContainer): Express {
   const app = express();
@@ -90,6 +92,13 @@ export function createServer(container: AppContainer): Express {
     }
     next();
   });
+  app.use(async (req, _res, next) => {
+    if (req.method === 'POST' && /^\/public\/[a-z0-9-]+\/posts\/[^/]+\/quote-cards$/.test(req.path) && rateLimiter) {
+      const allowed = await rateLimiter.consume(`quote-card:${req.ip ?? 'unknown'}`, 5, 60);
+      if (!allowed) { next(new AppError('Too many quote card requests', 429, 'RATE_LIMITED')); return; }
+    }
+    next();
+  });
   app.use((req, _res, next) => {
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
       const origin = req.get('origin');
@@ -126,6 +135,7 @@ export function createServer(container: AppContainer): Express {
       return;
     }
     const billing = container.billingService?.stats();
+    const quotes = container.quoteCardService?.stats();
     res
       .type('text/plain; version=0.0.4')
       .send(
@@ -138,7 +148,13 @@ export function createServer(container: AppContainer): Express {
               `vichaar_entitlement_cache_hits_total ${billing.cacheHits}\n` +
               `vichaar_entitlement_db_checks_total ${billing.dbChecks}\n` +
               `vichaar_entitlement_redis_errors_total ${billing.redisErrors}\n`
-            : ''),
+            : '') +
+          (quotes ? `vichaar_quote_cards_rendered_total ${quotes.rendered}\n` +
+            `vichaar_quote_cards_render_failures_total ${quotes.failures}\n` +
+            `vichaar_quote_cards_render_duration_ms_total ${quotes.renderDurationMsTotal}\n` +
+            `vichaar_quote_cards_render_rejected_total ${quotes.rejected}\n` +
+            `vichaar_quote_cards_cache_hits_total ${quotes.cacheHits}\n` +
+            `vichaar_quote_cards_invalid_quotes_total ${quotes.invalidQuotes}\n` : ''),
       );
   });
   app.use('/', createHealthRouter({ healthService: container.healthService }));
@@ -158,7 +174,9 @@ export function createServer(container: AppContainer): Express {
     });
     app.use('/publications', createPublicationRouter({ publicationService, authService }));
     if (container.analyticsService) app.use('/publications/:pubId', createAnalyticsRouter(container.analyticsService, authService));
+    if (container.milestoneService) app.use('/publications/:pubId', createMilestoneRouter(container.milestoneService, authService));
     app.use('/publications/:pubId/posts', createPostRouter({ postService, authService }));
+    if (container.quoteCardService) app.use('/public/:subdomain', createQuoteCardRouter(container.quoteCardService, authService));
     app.use('/public/:subdomain', createPublicPostRouter({ postService, authService }));
     if (container.billingService) {
       app.use('/public/:subdomain', createCheckoutRouter(container.billingService, authService));

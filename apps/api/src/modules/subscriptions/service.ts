@@ -7,7 +7,7 @@ import type { SubscribeInput, PreferencesInput } from './schemas.js';
 
 export interface SubscriptionService {
   subscribe(subdomain: string, input: SubscribeInput, correlationId: string): Promise<void>;
-  confirm(token: string): Promise<void>;
+  confirm(token: string, correlationId: string): Promise<void>;
   unsubscribe(token: string): Promise<void>;
   updatePreferences(token: string, input: PreferencesInput): Promise<void>;
 }
@@ -30,7 +30,7 @@ export function createSubscriptionService({
         correlationId,
       );
     },
-    async confirm(token) {
+    async confirm(token, correlationId) {
       const payload = verifyToken(token, tokenSecret);
       if (
         payload?.purpose !== 'confirm' ||
@@ -42,6 +42,7 @@ export function createSubscriptionService({
         payload.publicationId,
         payload.subscriptionId,
         token,
+        correlationId,
       );
       if (!changed) throw new ValidationError('Invalid or expired confirmation link');
     },

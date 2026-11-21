@@ -1,6 +1,7 @@
 import { createDatabaseClients } from '@vichaar/db';
 import { createSqsQueues } from '@vichaar/queue';
 import { createRateLimiter } from '@vichaar/api/rate-limiter';
+import { createLocalQuoteCardStorage } from '@vichaar/api/quote-cards';
 import { createDeliveryRepository } from './delivery-repository.js';
 import { createEmailProvider } from './provider.js';
 import { createPipeline } from './pipeline.js';
@@ -34,6 +35,7 @@ export interface WorkerConfig {
   razorpayKeySecret?: string;
   metricsBasePort: number;
   otlpEndpoint?: string;
+  quoteCardDir: string;
 }
 
 export function createWorkerContainer(config: WorkerConfig) {
@@ -82,6 +84,7 @@ export function createWorkerContainer(config: WorkerConfig) {
     trackingBaseUrl: config.trackingBaseUrl,
     trackingSecret: config.trackingSecret,
     metrics,
+    cardStorage: createLocalQuoteCardStorage(config.quoteCardDir),
   });
   const billing = createBillingPipeline({
     pool: database.primaryPool,

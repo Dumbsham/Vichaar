@@ -6,6 +6,7 @@ import { EmailRejectedError, type EmailProvider } from './provider.js';
 import type { WorkerMetrics } from './metrics.js';
 import { withSpan } from './tracing.js';
 import { signTrackingToken } from '@vichaar/shared';
+import type { ObjectStorage } from '@vichaar/api/quote-cards';
 
 export interface PipelineDeps {
   repo: DeliveryRepository;
@@ -19,6 +20,7 @@ export interface PipelineDeps {
   trackingBaseUrl?: string;
   trackingSecret?: string;
   metrics?: WorkerMetrics;
+  cardStorage?: ObjectStorage;
 }
 function cleanHeader(value: string): string {
   return value.replace(/[\r\n]/g, ' ').slice(0, 200);
@@ -68,6 +70,28 @@ export function createPipeline(deps: PipelineDeps) {
                 });
               } catch {
                 throw new Error('Confirmation email failed');
+              }
+            }
+          } else if (event.type === 'PostUnpublished') {
+            if (!deps.cardStorage) throw new Error('Quote card storage is unavailable');
+            const keys = await repo.cardKeys(event.publicationId, event.postId);
+            for (const key of keys) await deps.cardStorage.delete(key);
+            await repo.deleteCards(event.publicationId, event.postId);
+          } else if (event.type === 'SubscriptionConfirmed') {
+            const milestones = await repo.recordMilestones(event.publicationId);
+            for (const milestone of milestones) {
+              deps.metrics?.increment('milestones_created_total');
+              try {
+                await provider.send({
+                  to: milestone.email,
+                  from: deps.fromAddress,
+                  subject: `${milestone.threshold} subscribers on Vichaar`,
+                  html: `<p>${milestone.publicationName.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char] ?? char)} reached ${milestone.threshold} subscribers.</p>`,
+                  headers: {},
+                });
+                deps.metrics?.increment('milestone_notifications_sent_total');
+              } catch {
+                deps.metrics?.increment('milestone_notifications_failed_total');
               }
             }
           } else {

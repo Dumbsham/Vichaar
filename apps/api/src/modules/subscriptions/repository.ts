@@ -27,7 +27,7 @@ export interface SubscriptionRepository {
     tokenFactory: (id: string, exp: number) => string,
     correlationId: string,
   ): Promise<void>;
-  confirm(publicationId: string, id: string, token: string): Promise<boolean>;
+  confirm(publicationId: string, id: string, token: string, correlationId: string): Promise<boolean>;
   unsubscribe(publicationId: string, id: string): Promise<void>;
   find(publicationId: string, id: string): Promise<SubscriptionRow | null>;
   updatePreferences(publicationId: string, id: string, input: PreferencesInput): Promise<boolean>;
@@ -100,7 +100,7 @@ export function createSubscriptionRepository({ pool }: { pool: Pool }): Subscrip
         client.release();
       }
     },
-    async confirm(publicationId, id, token) {
+    async confirm(publicationId, id, token, correlationId) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -112,11 +112,16 @@ export function createSubscriptionRepository({ pool }: { pool: Pool }): Subscrip
            RETURNING id`,
           [publicationId, id, hash(token)],
         );
-        if (result.rows[0])
+        if (result.rows[0]) {
           await client.query(
             'UPDATE publications SET subscriber_count=subscriber_count+1,updated_at=now() WHERE id=$1',
             [publicationId],
           );
+          await client.query('INSERT INTO outbox_events(event_type,payload) VALUES ($1,$2)', [
+            'SubscriptionConfirmed',
+            { publicationId, subscriptionId: id, correlationId },
+          ]);
+        }
         await client.query('COMMIT');
         if (result.rows[0]) return true;
         const existing = await pool.query<{ status: string }>(

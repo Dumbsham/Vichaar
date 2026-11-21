@@ -37,6 +37,20 @@ export const eventMessage = z.discriminatedUnion('type', [
     correlationId: z.string().max(64),
   }),
   z.object({
+    type: z.literal('SubscriptionConfirmed'),
+    eventId: z.number().int(),
+    publicationId: uuid,
+    subscriptionId: uuid,
+    correlationId: z.string().max(64),
+  }),
+  z.object({
+    type: z.literal('PostUnpublished'),
+    eventId: z.number().int(),
+    publicationId: uuid,
+    postId: uuid,
+    correlationId: z.string().max(64),
+  }),
+  z.object({
     type: z.literal('FanoutPage'),
     publicationId: uuid,
     postId: uuid,

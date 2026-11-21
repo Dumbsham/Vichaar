@@ -31,7 +31,7 @@ export interface PostRepository {
   findPublic(publicationId: string, slug: string): Promise<PostRow | null>;
   update(publicationId: string, postId: string, input: UpdatePostInput): Promise<PostRow | null>;
   list(publicationId: string, cursor: string | undefined, limit: number): Promise<PostRow[]>;
-  unpublish(publicationId: string, postId: string): Promise<PostRow | null>;
+  unpublish(publicationId: string, postId: string, correlationId: string): Promise<PostRow | null>;
   publish(input: {
     publicationId: string;
     postId: string;
@@ -141,13 +141,25 @@ export function createPostRepository({ pool, readPool }: { pool: Pool; readPool:
       );
       return result.rows;
     },
-    async unpublish(publicationId, postId) {
-      const result = await pool.query<PostRow>(
-        `UPDATE posts SET status='unpublished', version=version+1, updated_at=now()
-         WHERE publication_id=$1 AND id=$2 AND status='published' RETURNING *`,
-        [publicationId, postId],
-      );
-      return result.rows[0] ?? null;
+    async unpublish(publicationId, postId, correlationId) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await client.query<PostRow>(
+          `UPDATE posts SET status='unpublished', version=version+1, updated_at=now()
+           WHERE publication_id=$1 AND id=$2 AND status='published' RETURNING *`,
+          [publicationId, postId],
+        );
+        if (result.rows[0])
+          await client.query('INSERT INTO outbox_events(event_type,payload) VALUES ($1,$2)', [
+            'PostUnpublished', { publicationId, postId, correlationId },
+          ]);
+        await client.query('COMMIT');
+        return result.rows[0] ?? null;
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally { client.release(); }
     },
     async publish(input) {
       const client = await pool.connect();

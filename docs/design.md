@@ -77,13 +77,15 @@ Comments, podcasts and video, mobile apps, recommendations, multi-author teams, 
 - Demo scale is simulated with seeded data and load tests against a stubbed email provider.
 - Writers must confirm they have consent for any address they add (India's DPDP Act).
 
-## Current implementation (Phase 4)
+## Current implementation (Phase 6)
 
 The local demo API now supports signup, login and logout with Argon2id password hashes and hashed PostgreSQL sessions. Auth requests use a Redis token bucket with a smaller local fallback when Redis is unavailable. It also supports tenant-scoped publication and draft post endpoints; version-checked autosave; and a publish transaction that writes sanitized HTML, tracked link rows, a writing streak, and one `PostPublished` outbox event. A public endpoint returns only the preview of a published post. The full body of a paid post is never returned by that endpoint.
 
 Phase 2 adds double opt-in subscriptions, signed confirmation and unsubscribe links, suppression, reader delivery preferences, a monthly partitioned delivery ledger, and five separately run worker roles. The outbox relay publishes typed SQS messages; fan-out pages active subscribers in batches of 1,000; the scheduler uses a durable round-robin publication cursor, daily send budgets, and queue-depth backpressure; the sender claims up to 100 delivery rows in one statement before any provider call. A stale `sending` row becomes `failed: unknown_outcome` and is never automatically sent again. Explicit temporary SMTP rejections can return to `pending` with bounded exponential backoff and jitter. The sweeper also recovers stale `queued` rows and purges published outbox records older than seven days.
 
 Phase 3 added Redis public-preview caching, narrow invalidation, CDN-compatible headers, and a streaming read replica. Phase 4 adds test-mode Razorpay checkout, a signed webhook inbox, a hooks worker, hourly reconciliation, and database-backed paid access with a 60-second Redis cache. Phase 5 adds an isolated tracking listener on port 4001, bounded in-memory buffering to TrackQ, a ClickHouse batch consumer and materialized rollups, and publication-scoped writer statistics. Tests use a stub Razorpay provider; real test-mode checkout requires operator-supplied test credentials. The local demo runs API, tracking, and worker Node processes against Compose dependencies. The SMTP path targets Mailpit locally; tests use a stub provider. SES is restricted to production and configured verified sandbox recipients. The Next.js editor, external CDN deployment, containerized API/workers, and Terraform deployment remain future phases. No live demo or production deployment is claimed.
+
+Phase 6 adds Unicode-normalized quote validation against free post text or the paid preview unless the caller is entitled. Satori and resvg render stable PNG cards using bundled Noto Sans fonts for Latin, Devanagari, and Tamil. The API caps active renders at two; PostgreSQL stores unique card metadata and the demo writes images under `QUOTE_CARD_DIR`. The fanout worker consumes `PostUnpublished` to delete card files and metadata. Confirmation now emits `SubscriptionConfirmed` transactionally; the worker inserts 10, 100, and 1,000 subscriber milestones once and sends the writer an at-most-once notification. A writer-only endpoint returns milestones and the existing IST weekly streak. Full web typography and card creation controls remain in the Next.js phase. See [ADR-014](adr/014_QuoteCardsAndMilestones.md).
 
 For deployments behind a reverse proxy, set `TRUST_PROXY` to that proxy's specific address or CIDR so `req.ip` used by rate limiting identifies the reader. Direct API access leaves proxy trust disabled. This must match the actual Caddy/network setup before enabling it.
 
@@ -402,11 +404,10 @@ erDiagram
     }
 
     milestones {
-        uuid id PK
-        uuid publication_id FK
-        text kind "subscribers or streak_weeks"
-        int threshold
-        timestamptz reached_at
+        uuid publication_id PK, FK
+        text kind PK "subscribers"
+        int threshold PK
+        timestamptz created_at
     }
 
     writing_streaks {
@@ -417,10 +418,9 @@ erDiagram
     }
 
     quote_cards {
-        uuid id PK
-        uuid post_id FK
+        uuid post_id PK, FK
         uuid publication_id FK
-        text quote_hash "unique with post"
+        text quote_hash PK
         text storage_key
         timestamptz created_at
     }
@@ -496,6 +496,7 @@ erDiagram
 | `GET /subscribe-demo` | Phase 2 plain HTML verification page |
 | `GET`, `POST /subscriptions/preferences/:token` | Change an active subscription's slot and timezone |
 | `POST /public/:subdomain/posts/:slug/quote-cards` | Create a quote card, 422 if the quote is not in the post |
+| `GET /public/:subdomain/posts/:slug/quote-cards/:hash.png` | Retrieve a generated PNG while the post remains published |
 
 **Reader, account and billing (implemented in the API):** `GET /me/subscriptions?publicationId=:id`, `POST /public/:subdomain/checkout`, `POST /me/subscriptions/:id/cancel` with `publicationId` in the body. After checkout the future UI polls the publication-scoped status endpoint, because the webhook is the source of truth for payment state. The paid full-body endpoint checks a 60-second Redis entitlement cache, then PostgreSQL on a miss or Redis failure; PostgreSQL failure returns 503. The webhook and hourly reconciliation worker roles use the existing 1.2 GB worker budget target; the budget has not yet been measured under load. See [ADR-012](adr/012_billingWebhookInbox.md) for the account-binding and test-mode limitations.
 

@@ -26,7 +26,7 @@ export function createConfirmationRouter({
 }): ExpressRouter {
   const router = Router();
   router.post('/confirm', async (req, res) => {
-    await service.confirm(confirmSchema.parse(req.body).token);
+    await service.confirm(confirmSchema.parse(req.body).token, z.string().parse(req.headers['x-correlation-id']));
     res.status(204).end();
   });
   router.post('/unsubscribe/:token', async (req, res) => {

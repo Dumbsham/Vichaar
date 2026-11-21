@@ -32,6 +32,8 @@ import {
   type SubscriptionService,
 } from './modules/subscriptions/index.js';
 import { createAnalyticsRepository, createAnalyticsService } from './modules/analytics/index.js';
+import { createQuoteCardRepository, createQuoteCardService, createQuoteRenderer, createLocalQuoteCardStorage, type QuoteCardService } from './modules/quote-cards/index.js';
+import { createMilestoneRepository, createMilestoneService } from './modules/milestones/index.js';
 
 export interface AppContainer {
   db?: DatabaseClients;
@@ -44,6 +46,8 @@ export interface AppContainer {
   previewCache?: PreviewCache;
   billingService?: BillingService;
   analyticsService?: ReturnType<typeof createAnalyticsService>;
+  quoteCardService?: QuoteCardService;
+  milestoneService?: ReturnType<typeof createMilestoneService>;
   enqueueHook?: (id: string, correlationId: string) => Promise<void>;
   webhookSecret?: string;
   close: () => Promise<void>;
@@ -135,6 +139,14 @@ export function createContainer(config: ContainerConfig): AppContainer {
     publicationService,
     tokenSecret: process.env.TOKEN_HMAC_SECRET ?? 'local_development_hmac_secret_32chars_min!',
   });
+  const quoteCardService = createQuoteCardService({
+    publicationService,
+    repository: createQuoteCardRepository(db.primaryPool),
+    storage: createLocalQuoteCardStorage(process.env.QUOTE_CARD_DIR ?? './data/quote-cards'),
+    renderer: createQuoteRenderer(),
+    entitlement: billingService,
+  });
+  const milestoneService = createMilestoneService({ publicationService, repository: createMilestoneRepository(db.primaryPool) });
   return {
     db,
     healthService,
@@ -146,6 +158,8 @@ export function createContainer(config: ContainerConfig): AppContainer {
     previewCache,
     billingService,
     analyticsService,
+    quoteCardService,
+    milestoneService,
     enqueueHook,
     webhookSecret,
     close: async () => {

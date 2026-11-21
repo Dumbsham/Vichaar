@@ -106,8 +106,8 @@ describe('Phase 2 pipeline with real Postgres, Redis, and ElasticMQ', () => {
       .set('Cookie', cookie)
       .send({ sendImmediately: true });
     expect(published.status).toBe(202);
-    expect(await pipeline.relay()).toBe(1);
-    expect(await pipeline.fanoutOnce()).toBe(1);
+    expect(await pipeline.relay()).toBe(2);
+    expect(await pipeline.fanoutOnce()).toBe(2);
     expect(await pipeline.scheduleOnce()).toBe(1);
     expect(await pipeline.sendOnce()).toBe(1);
     expect(emails).toHaveLength(2);

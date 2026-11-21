@@ -17,7 +17,7 @@
 
 </div>
 
-> **Current status:** Phases 1–5 are implemented locally. The Phase 5 tracking path passed a 1,000 requests/second local k6 run; the planned 2 vCPU demo capacity remains unverified. Razorpay requests need your own test keys; automated tests use a stub provider. The Next.js app and deployment containers are later phases.
+> **Current status:** Phases 1–6 are implemented locally. The Phase 5 tracking path passed a 1,000 requests/second local k6 run; the planned 2 vCPU demo capacity remains unverified. Razorpay requests need your own test keys; automated tests use a stub provider. The Next.js app and deployment containers are later phases.
 
 ## What works today
 
@@ -30,6 +30,7 @@
 - **Subscriptions:** Readers request a confirmation email without exposing whether an address is already subscribed. Signed links confirm once; signed unsubscribe links add a suppression and stop pending sends. Readers can change slot and timezone while deliveries remain pending. `/subscribe-demo` is a plain HTML verification page.
 - **Delivery:** Five delivery worker roles relay outbox events through ElasticMQ, fan out active subscribers in pages, claim due rows fairly with a daily publication cap, send through a stub, Mailpit SMTP, or SES sandbox provider, and sweep stale rows. A sender claims a row before calling the provider; ambiguous outcomes are flagged and never automatically retried. Monthly partitions and a default partition hold the delivery ledger.
 - **Paid access:** Logged-in, confirmed newsletter readers can start a Razorpay test-mode subscription. Signed webhooks enter a durable inbox and the hooks queue; a worker applies them once and rejects stale events. Paid bodies require a database-backed entitlement with a 60-second Redis cache. A separate hourly worker reconciles missed payment events. Cancellation and subscription status endpoints are available.
+- **Quote cards and milestones:** Readers can create a PNG from verified post text in English, Hindi, or Tamil. Paid posts allow preview text unless the reader is entitled. Cards are cached by a stable hash and removed after unpublish. Confirmation events create 10, 100, and 1,000 subscriber milestones once. Owners can read milestone history and their IST writing streak.
 
 Scheduled posts are released by the scheduler when due. There is no Next.js frontend yet. Email post-body links use signed tracking redirects and an open pixel; analytics statistics are available to publication owners.
 
@@ -46,11 +47,13 @@ pnpm db:migrate
 pnpm dev
 ```
 
-The API listens on `http://localhost:4000`. `pnpm dev` starts seven worker roles as separate processes, including webhooks and hourly reconciliation. Check `GET /healthz` for process health and `GET /readyz` for PostgreSQL connectivity. `pnpm db:seed` currently checks the baseline migration record; it does not create sample writers or posts.
+The API listens on `http://localhost:4000`. `pnpm dev` starts eight worker roles as separate processes, including webhooks, hourly reconciliation, and analytics. Check `GET /healthz` for process health and `GET /readyz` for PostgreSQL connectivity. `pnpm db:seed` currently checks the baseline migration record; it does not create sample writers or posts.
 
 The workers need local SQS credentials exported, such as `AWS_ACCESS_KEY_ID=test` and `AWS_SECRET_ACCESS_KEY=test`. [`.env.example`](.env.example) documents the remaining configuration. Scripts do not automatically load `.env`; export variables or provide them through your process manager. The local defaults target Compose. `TRUST_PROXY` should be set only to a known reverse proxy address or CIDR when deploying behind one.
 
 Phase 5 starts a separate tracking listener at `http://localhost:4001` and an analytics worker. Set the same `TRACKING_HMAC_SECRET` (at least 32 characters) for both processes. The local Compose ClickHouse user and password are in `.env.example`; existing ClickHouse containers created with different credentials need matching `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`. Writer statistics are at `GET /publications/:pubId/stats`. Tracking metrics are at port 4001 `/metrics`, and analytics worker metrics use port 9107.
+
+For Phase 6, `POST /public/:subdomain/posts/:slug/quote-cards` accepts `{ "quote": "text from the post" }` and returns a PNG URL. `GET /publications/:pubId/milestones` requires the owner's session. `QUOTE_CARD_DIR` defaults to `./data/quote-cards` relative to the repository root; the API and fanout worker use the same directory. No new API key is needed. The worker's email provider must already be configured to notify writers. The full quote-card UI arrives with the Next.js frontend.
 
 ### Razorpay test-mode setup
 
@@ -84,6 +87,10 @@ No real charge or live payment is supported. Automated webhook tests use signed 
 | `GET`         | `/me/subscriptions?publicationId=:id`         | Read paid subscription status for one publication  |
 | `POST`        | `/me/subscriptions/:id/cancel`                | Cancel at period end; body has `publicationId`     |
 | `GET`         | `/public/:subdomain/posts/:slug/full`         | Read a full post, with paid access checked         |
+| `POST`        | `/publications/:pubId/posts/:postId/unpublish` | Unpublish and queue card cleanup                  |
+| `POST`        | `/public/:subdomain/posts/:slug/quote-cards`  | Create a verified quote-card PNG                   |
+| `GET`         | `/public/:subdomain/posts/:slug/quote-cards/:hash.png` | Retrieve a published post's card          |
+| `GET`         | `/publications/:pubId/milestones`             | Read owned milestones and writing streak           |
 
 For request shapes, see the [shared Zod schemas](packages/shared/src/schemas/) and the [Phase 1B plan](docs/MasterPlan.md#phase-1b-domain-foundation-auth-tenant-scoping-publications--posts).
 
@@ -100,9 +107,9 @@ REDIS_TEST_URL=redis://localhost:6379 pnpm test
 
 ## Design direction
 
-Vichaar is a modular monolith with separate delivery workers. PostgreSQL holds durable state; Redis is for rate limits and public preview caching. Domain changes are recorded in a transactional outbox and relayed through an SQS-compatible queue. The implemented delivery flow is outbox relay → subscriber fan-out → slot scheduler → sender, with an atomic delivery claim before an email is sent. Ambiguous send outcomes are flagged rather than automatically retried. Open and click events remain planned for batched ClickHouse ingestion instead of per-event PostgreSQL writes.
+Vichaar is a modular monolith with separate delivery workers. PostgreSQL holds durable state; Redis is for rate limits and public preview caching. Domain changes are recorded in a transactional outbox and relayed through an SQS-compatible queue. The implemented delivery flow is outbox relay → subscriber fan-out → slot scheduler → sender, with an atomic delivery claim before an email is sent. Ambiguous send outcomes are flagged rather than automatically retried. Open and click events are batched into ClickHouse without per-event PostgreSQL writes.
 
-The design targets include 500,000 recipients for one send, 1,000 emails per second, cache-first post reads, and operation on a 2 vCPU / 12 GB demo machine. These are **unverified targets**. The calculations, resource budget, and tradeoffs are in [docs/design.md](docs/design.md); measured benchmarks will be added only after real runs.
+The design targets include 500,000 recipients for one send, 1,000 emails per second, cache-first post reads, and operation on a 2 vCPU / 12 GB demo machine. These are **unverified targets**. The calculations, resource budget, and tradeoffs are in [docs/design.md](docs/design.md); recorded results from real runs are in [docs/benchmarks.md](docs/benchmarks.md).
 
 The local [Compose file](infra/compose/docker-compose.yml) defines PostgreSQL, a second PostgreSQL container, Redis, ElasticMQ, ClickHouse, and Mailpit. The API and workers run as local Node processes during this phase. The second PostgreSQL container is a working streaming read replica in the local Compose stack. Caddy, API/web/worker containers, an OpenTelemetry collector, and the Terraform production blueprint remain future work. No live demo or production deployment is claimed here.
 

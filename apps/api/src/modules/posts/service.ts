@@ -118,6 +118,7 @@ export interface PostService {
     publicationId: string,
     ownerId: string,
     postId: string,
+    correlationId: string,
   ): Promise<ReturnType<typeof postView>>;
   publish(
     publicationId: string,
@@ -182,9 +183,9 @@ export function createPostService({
       await previewCache.invalidate(previewCacheKey(publication.subdomain, row.slug));
       return postView(row);
     },
-    async unpublish(publicationId, ownerId, postId) {
+    async unpublish(publicationId, ownerId, postId, correlationId) {
       const publication = await publicationService.getOwned(publicationId, ownerId);
-      const row = await postRepo.unpublish(publicationId, postId);
+      const row = await postRepo.unpublish(publicationId, postId, correlationId);
       if (!row) throw new NotFoundError();
       await previewCache.invalidate(previewCacheKey(publication.subdomain, row.slug));
       return postView(row);

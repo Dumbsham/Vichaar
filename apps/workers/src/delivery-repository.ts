@@ -54,6 +54,31 @@ const dbKey = (key: DeliveryKey) => ({
 
 export function createDeliveryRepository(pool: Pool) {
   return {
+    async cardKeys(publicationId: string, postId: string): Promise<string[]> {
+      const result = await pool.query<{ storage_key: string }>(
+        'SELECT storage_key FROM quote_cards WHERE publication_id=$1 AND post_id=$2',
+        [publicationId, postId],
+      );
+      return result.rows.map((row) => row.storage_key);
+    },
+    async deleteCards(publicationId: string, postId: string): Promise<void> {
+      await pool.query('DELETE FROM quote_cards WHERE publication_id=$1 AND post_id=$2', [publicationId, postId]);
+    },
+    async recordMilestones(publicationId: string): Promise<Array<{ threshold: number; email: string; publicationName: string }>> {
+      const result = await pool.query<{ threshold: number; email: string; publication_name: string }>(
+        `WITH inserted AS (
+           INSERT INTO milestones(publication_id,kind,threshold)
+           SELECT p.id,'subscribers',t.threshold
+           FROM publications p CROSS JOIN (VALUES (10),(100),(1000)) AS t(threshold)
+           WHERE p.id=$1 AND p.subscriber_count>=t.threshold
+           ON CONFLICT DO NOTHING RETURNING publication_id,threshold
+         ) SELECT i.threshold,u.email,p.name AS publication_name
+         FROM inserted i JOIN publications p ON p.id=i.publication_id JOIN users u ON u.id=p.owner_id
+         ORDER BY i.threshold`,
+        [publicationId],
+      );
+      return result.rows.map((row) => ({ threshold: row.threshold, email: row.email, publicationName: row.publication_name }));
+    },
     async trackedLinks(keys: DeliveryKey[]): Promise<Array<{ id: string; publication_id: string; post_id: string; target_url: string }>> {
       const result = await pool.query<{ id: string; publication_id: string; post_id: string; target_url: string }>('SELECT id,publication_id,post_id,target_url FROM tracked_links WHERE publication_id=ANY($1::uuid[]) AND post_id=ANY($2::uuid[])', [[...new Set(keys.map((key) => key.publicationId))], [...new Set(keys.map((key) => key.postId))]]);
       return result.rows;
@@ -68,7 +93,9 @@ export function createDeliveryRepository(pool: Pool) {
         for (const row of result.rows) {
           if (
             row.event_type !== 'PostPublished' &&
-            row.event_type !== 'SubscriptionConfirmationRequested'
+            row.event_type !== 'SubscriptionConfirmationRequested' &&
+            row.event_type !== 'SubscriptionConfirmed' &&
+            row.event_type !== 'PostUnpublished'
           )
             throw new Error(`Unknown outbox type ${row.event_type}`);
           if (typeof row.payload !== 'object' || row.payload === null)

@@ -4,6 +4,7 @@ dist
 .env
 !.env.example
 coverage
+data/quote-cards/
 *.log
 .DS_Store
 learning.md

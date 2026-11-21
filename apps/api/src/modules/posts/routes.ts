@@ -76,6 +76,7 @@ export function createPostRouter({
         uuid.parse(req.params['pubId']),
         user.id,
         uuid.parse(req.params.postId),
+        z.string().parse(req.headers['x-correlation-id']),
       ),
     );
   });

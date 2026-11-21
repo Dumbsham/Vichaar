@@ -181,12 +181,12 @@ The same pipeline (`/webhooks/ses`, after SNS signature verification). Worker: h
 1. Rate limit per IP.
 2. Normalize the quote (Unicode NFC, collapsed whitespace). Reject over 200 characters.
 3. **Pick the text to match against:** free post: full text. Paid post: the preview text only, unless the caller is entitled. Otherwise the endpoint becomes an oracle that confirms whether a phrase appears in paid content.
-4. Reject with `QUOTE_NOT_IN_POST` if the quote is not a substring of that text (plain text is cached per post version).
+4. Reject with `QUOTE_NOT_IN_POST` if the quote is not a substring of that text. The API derives plain text from the stored sanitized HTML for each request.
 5. `hash = sha256(postId + normalizedQuote + templateVersion)`. If `quote_cards (post_id, quote_hash)` exists, return its URL.
 6. Otherwise render: Satori turns a template into SVG using the right font for the post language (Devanagari, Tamil, and so on), resvg turns it into PNG. Limit concurrent renders (for example 2) and set a timeout.
-7. Store the PNG through the `ObjectStorage` interface (local disk in the demo, S3 in the blueprint) at `cards/{hash}.png`, insert the row with `ON CONFLICT DO NOTHING`, return the URL.
+7. Store the PNG through the `ObjectStorage` interface (local disk in the demo, S3 in the blueprint) at `cards/{hash}.png`, insert the row with `ON CONFLICT DO NOTHING`, return the URL. The API and fanout worker share `QUOTE_CARD_DIR` in the demo.
 
-Two simultaneous identical requests both render and one insert wins, which is harmless. Card URLs are immutable, so the CDN caches them forever. On unpublish, an outbox event deletes the post's card files.
+Two simultaneous identical requests both render and one insert wins, which is harmless. The image endpoint uses a 60-second public cache lifetime and checks that the post remains published. On unpublish, an outbox event deletes the post's card files and metadata.
 
 ---
 

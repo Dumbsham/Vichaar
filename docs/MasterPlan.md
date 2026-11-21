@@ -294,6 +294,8 @@ Implement the standalone tracking process for opens and clicks, buffered message
 ---
 
 ### Phase 6: Delight Features (Typography, Quote Cards, Milestones, Streaks)
+Status: implemented in the API and workers. Full web font usage and quote-card controls are part of the later Next.js frontend phase.
+
 Implement language support, Satori quote cards, and streak/milestone tracking.
 
 - Typography: Language tag support (`hi`, `ta`, `en`, etc.) with Noto Sans Devanagari and Tamil font rendering.
