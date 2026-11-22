@@ -193,10 +193,19 @@ export function createServer(container: AppContainer): Express {
       next();
     });
     app.use('/public/:subdomain', async (req, _res, next) => {
+      if (req.method === 'GET') {
+        next();
+        return;
+      }
       await publicationService.getBySubdomain(
         z.string().min(3).max(30).parse(req.params.subdomain),
       );
       next();
+    });
+    app.get('/public/:subdomain', async (req, res) => {
+      const result = await publicationService.getPublic(z.string().min(3).max(30).parse(req.params.subdomain));
+      res.setHeader('Cache-Control', 'no-store');
+      res.json(result);
     });
     app.use('/publications', createPublicationRouter({ publicationService, authService }));
     if (container.analyticsService) app.use('/publications/:pubId', createAnalyticsRouter(container.analyticsService, authService));

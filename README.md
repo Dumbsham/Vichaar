@@ -17,7 +17,7 @@
 
 </div>
 
-> **Current status:** Phases 1–7 are implemented locally. Phase 7 added metrics, traces, failure tests, and measured stub delivery and slot benchmarks. The planned 2 vCPU demo capacity and production email throughput remain unverified. Razorpay requests need your own test keys; automated tests use a stub provider. The Next.js app and deployment containers are later phases.
+> **Current status:** Phases 1–7 and frontend F0/F1 are implemented locally. Public reading pages are available in Next.js; subscription, account, writer, and quote-card screens are later frontend phases. The planned 2 vCPU demo capacity and production email throughput remain unverified. Razorpay requests need your own test keys; automated tests use a stub provider. Deployment containers remain a later phase.
 
 ## What works today
 
@@ -26,15 +26,16 @@
 - **Posts:** Writers can create drafts, list and read them, and autosave with a version check that rejects stale edits. Posts carry a language tag and can be marked free or paid.
 - **Publishing:** The API sanitizes post HTML and commits the post, tracked links, writing streak, and a `PostPublished` outbox event in one transaction. Repeating the publish request does not create a second event.
 - **Public previews:** A published post can be read by subdomain and slug. A paid post's full body is not returned by this public endpoint.
+- **Public web reading:** Next.js serves publication pages and free post bodies at `/p/:subdomain` and `/p/:subdomain/:slug`. Paid posts show only their safe preview. Public lists use cursor pagination and exclude drafts and other publications. `/design-proof` shows clearly labelled sample typography in English, Hindi, and Tamil.
 - **Project foundation:** The pnpm workspace, strict TypeScript, module-boundary lint rule, PostgreSQL migrations, health checks, local Compose dependencies, and CI are in place.
 - **Subscriptions:** Readers request a confirmation email without exposing whether an address is already subscribed. Signed links confirm once; signed unsubscribe links add a suppression and stop pending sends. Readers can change slot and timezone while deliveries remain pending. `/subscribe-demo` is a plain HTML verification page.
 - **Delivery:** Five delivery worker roles relay outbox events through ElasticMQ, fan out active subscribers in pages, claim due rows fairly with a daily publication cap, send through a stub, Mailpit SMTP, or SES sandbox provider, and sweep stale rows. A sender claims a row before calling the provider; ambiguous outcomes are flagged and never automatically retried. Monthly partitions and a default partition hold the delivery ledger.
 - **Paid access:** Logged-in, confirmed newsletter readers can start a Razorpay test-mode subscription. Signed webhooks enter a durable inbox and the hooks queue; a worker applies them once and rejects stale events. Paid bodies require a database-backed entitlement with a 60-second Redis cache. A separate hourly worker reconciles missed payment events. Cancellation and subscription status endpoints are available.
 - **Quote cards and milestones:** Readers can create a PNG from verified post text in English, Hindi, or Tamil. Paid posts allow preview text unless the reader is entitled. Cards are cached by a stable hash and removed after unpublish. Confirmation events create 10, 100, and 1,000 subscriber milestones once. Owners can read milestone history and their IST writing streak.
 
-Scheduled posts are released by the scheduler when due. There is no Next.js frontend yet. Email post-body links use signed tracking redirects and an open pixel; analytics statistics are available to publication owners.
+Scheduled posts are released by the scheduler when due. Email post-body links still point to the API until the frontend email-link flows are complete. Analytics statistics are available to publication owners.
 
-## Run the current API locally
+## Run the API and frontend locally
 
 **Requirements:** Node.js 22.12 or newer, pnpm 9, and Docker with Compose.
 
@@ -47,7 +48,7 @@ pnpm db:migrate
 pnpm dev
 ```
 
-The API listens on `http://localhost:4000`. `pnpm dev` starts eight worker roles as separate processes, including webhooks, hourly reconciliation, and analytics. Check `GET /healthz` for process health and `GET /readyz` for PostgreSQL connectivity. `pnpm db:seed` currently checks the baseline migration record; it does not create sample writers or posts.
+The web app listens on `http://localhost:3000`, and the API on `http://localhost:4000`. Open `/design-proof` to inspect the layout without data, or `/p/<subdomain>` after creating a publication and publishing a post through the API. `pnpm dev` also starts eight worker roles. Check API `GET /healthz` and `/readyz` for health. `pnpm db:seed` does not create sample writers or posts. The web server uses `API_ORIGIN` (default `http://127.0.0.1:4000`) for reads and its same-origin `/api/*` rewrite. Keep `CORS_ORIGIN` set to the browser's web origin for mutating requests.
 
 The workers need local SQS credentials exported, such as `AWS_ACCESS_KEY_ID=test` and `AWS_SECRET_ACCESS_KEY=test`. [`.env.example`](.env.example) documents the remaining configuration. Scripts do not automatically load `.env`; export variables or provide them through your process manager. The local defaults target Compose. `TRUST_PROXY` should be set only to a known reverse proxy address or CIDR when deploying behind one.
 
@@ -74,6 +75,8 @@ No real charge or live payment is supported. Automated webhook tests use signed 
 | `GET`, `PATCH` | `/publications/:pubId/posts/:postId`          | Read or autosave an owned post                     |
 | `POST`         | `/publications/:pubId/posts/:postId/publish`  | Publish or record a future schedule; returns `202` |
 | `GET`          | `/public/:subdomain/posts/:slug`              | Read a published public preview                    |
+| `GET`          | `/public/:subdomain`                          | Read public publication metadata                   |
+| `GET`          | `/public/:subdomain/posts?cursor=&limit=`     | Read only published posts, with bounded pagination |
 | `GET`          | `/publications/:pubId/stats`                  | Publication-scoped open and click rollups          |
 | `GET`          | `:4001/t/o/:token.gif`, `:4001/t/c/:token`    | Open pixel and signed click redirect               |
 | `GET`          | `/healthz`, `/readyz`                         | Liveness and database readiness                    |
@@ -117,6 +120,7 @@ The local [Compose file](infra/compose/docker-compose.yml) defines PostgreSQL, a
 
 ```text
 apps/api/          Express API: auth, publications, posts, health
+apps/web/          Next.js public reading app and design proof
 apps/workers/      Delivery workers and email providers
 packages/db/       PostgreSQL client, Drizzle schemas, SQL migrations
 packages/queue/    Typed SQS-compatible queues
@@ -138,6 +142,9 @@ docs/              Design, flows, threat model, failure analysis, ADRs
 - [x] Phase 6: language-aware quote cards, milestones, and IST writing streak verification
 - [x] Phase 7: metrics, tracing, logging redaction, Redis and ClickHouse chaos, stub delivery and slot benchmarks
 - [ ] Phase 8: Next.js frontend and deployment blueprint
+  - [x] Frontend F0: foundation, editorial design proof, same-origin API rewrite
+  - [x] Frontend F1: publication and post reading with public paginated API reads
+  - [ ] Frontend F2–F5 and separate deployment blueprint
 
 The detailed sequence and scope are in [docs/MasterPlan.md](docs/MasterPlan.md). Custom domains and CSV subscriber import are outside the v1 scope.
 

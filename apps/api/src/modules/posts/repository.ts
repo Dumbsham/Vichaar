@@ -19,6 +19,15 @@ export interface PostRow {
   html_preview?: string;
   html_full?: string;
 }
+export interface PublicPostListRow {
+  id: string;
+  slug: string;
+  title: string;
+  language: string;
+  access: 'free' | 'paid';
+  published_at: Date;
+  html_preview: string;
+}
 export type PublishResult = { row: PostRow; published: boolean } | null;
 export interface PostRepository {
   create(
@@ -29,6 +38,11 @@ export interface PostRepository {
   ): Promise<PostRow | null>;
   find(publicationId: string, postId: string): Promise<PostRow | null>;
   findPublic(publicationId: string, slug: string): Promise<PostRow | null>;
+  listPublic(
+    publicationId: string,
+    cursor: { publishedAt: Date; id: string } | undefined,
+    limit: number,
+  ): Promise<PublicPostListRow[]>;
   update(publicationId: string, postId: string, input: UpdatePostInput): Promise<PostRow | null>;
   list(publicationId: string, cursor: string | undefined, limit: number): Promise<PostRow[]>;
   unpublish(publicationId: string, postId: string, correlationId: string): Promise<PostRow | null>;
@@ -97,6 +111,19 @@ export function createPostRepository({ pool, readPool }: { pool: Pool; readPool:
       try { result = await readPool.query<PostRow>(sql, [publicationId, slug]); }
       catch { result = await pool.query<PostRow>(sql, [publicationId, slug]); }
       return result.rows[0] ?? null;
+    },
+    async listPublic(publicationId, cursor, limit) {
+      const sql = `SELECT p.id,p.slug,p.title,p.language,p.access,p.published_at,c.html_preview
+        FROM posts p JOIN post_contents c
+          ON c.post_id=p.id AND c.publication_id=p.publication_id
+        WHERE p.publication_id=$1 AND p.status='published'
+          AND ($2::timestamptz IS NULL OR (p.published_at,p.id)<($2::timestamptz,$3::uuid))
+        ORDER BY p.published_at DESC,p.id DESC LIMIT $4`;
+      const params = [publicationId, cursor?.publishedAt ?? null, cursor?.id ?? null, limit];
+      let result;
+      try { result = await readPool.query<PublicPostListRow>(sql, params); }
+      catch { result = await pool.query<PublicPostListRow>(sql, params); }
+      return result.rows;
     },
     async update(publicationId, postId, input) {
       const client = await pool.connect();

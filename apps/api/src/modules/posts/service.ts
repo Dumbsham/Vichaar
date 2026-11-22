@@ -12,6 +12,52 @@ import {
 import type { CreatePostInput, UpdatePostInput, PublishPostInput } from '@vichaar/shared/schemas';
 import type { PublicationService } from '../publications/index.js';
 import type { PostRepository, PostRow } from './repository.js';
+import { z } from 'zod';
+
+const publicCursorSchema = z.object({ publishedAt: z.string().datetime(), id: z.string().uuid() });
+
+function decodePublicCursor(
+  cursor: string | undefined,
+): { publishedAt: Date; id: string } | undefined {
+  if (!cursor) return undefined;
+  if (cursor.length > 512 || !/^[A-Za-z0-9_-]+$/.test(cursor))
+    throw new AppError('Invalid page cursor', 422, 'VALIDATION_FAILED');
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+  } catch {
+    throw new AppError('Invalid page cursor', 422, 'VALIDATION_FAILED');
+  }
+  const parsed = publicCursorSchema.safeParse(decoded);
+  if (!parsed.success) throw new AppError('Invalid page cursor', 422, 'VALIDATION_FAILED');
+  return { publishedAt: new Date(parsed.data.publishedAt), id: parsed.data.id };
+}
+
+function excerptFromPreview(html: string): string {
+  const spaced = html.replace(/<\s*\/?\s*(?:p|br|h[1-3]|li|blockquote|ul|ol)\b[^>]*>/gi, ' ');
+  const escaped = sanitizeHtml(spaced, { allowedTags: [], allowedAttributes: {} });
+  const entities: Record<string, string> = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+    nbsp: ' ',
+  };
+  const plain = escaped.replace(
+    /&(#(?:x[0-9a-f]+|[0-9]+)|amp|lt|gt|quot|apos|nbsp);/gi,
+    (match, code: string) => {
+      if (!code.startsWith('#')) return entities[code.toLowerCase()] ?? match;
+      const hex = code[1]?.toLowerCase() === 'x';
+      const value = Number.parseInt(code.slice(hex ? 2 : 1), hex ? 16 : 10);
+      return Number.isInteger(value) && value > 0 && value <= 0x10ffff &&
+        !(value >= 0xd800 && value <= 0xdfff)
+        ? String.fromCodePoint(value)
+        : '';
+    },
+  );
+  return [...plain].slice(0, 240).join('').replace(/\s+/gu, ' ').trim();
+}
 
 export function slugFromTitle(title: string): string {
   const words =
@@ -128,6 +174,11 @@ export interface PostService {
     correlationId: string,
   ): Promise<ReturnType<typeof postView>>;
   publicPreview(subdomain: string, slug: string): Promise<PublicPreview>;
+  listPublic(subdomain: string, cursor: string | undefined, limit: number): Promise<{
+    items: { id: string; slug: string; title: string; language: string; isPaid: boolean; publishedAt: string; excerpt: string }[];
+    nextCursor: string | null;
+    hasMore: boolean;
+  }>;
   publicFull(subdomain: string, slug: string, userId?: string): Promise<{ htmlFull: string }>;
 }
 export function createPostService({
@@ -243,6 +294,28 @@ export function createPostService({
         if (!row) throw new NotFoundError();
         return { ...postView(row), status: 'published', htmlPreview: row.html_preview ?? '' };
       });
+    },
+    async listPublic(subdomain, cursor, limit) {
+      const publication = await publicationService.getBySubdomain(subdomain);
+      const rows = await postRepo.listPublic(publication.id, decodePublicCursor(cursor), limit + 1);
+      const hasMore = rows.length > limit;
+      const page = rows.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        items: page.map((row) => ({
+          id: row.id,
+          slug: row.slug,
+          title: row.title,
+          language: row.language,
+          isPaid: row.access === 'paid',
+          publishedAt: row.published_at.toISOString(),
+          excerpt: excerptFromPreview(row.html_preview),
+        })),
+        nextCursor: hasMore && last
+          ? Buffer.from(JSON.stringify({ publishedAt: last.published_at.toISOString(), id: last.id })).toString('base64url')
+          : null,
+        hasMore,
+      };
     },
   };
 }

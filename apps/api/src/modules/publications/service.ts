@@ -18,6 +18,16 @@ export function publicationView(row: PublicationRow) {
     updatedAt: row.updated_at.toISOString(),
   };
 }
+export function publicPublicationView(row: PublicationRow) {
+  return {
+    id: row.id,
+    name: row.name,
+    subdomain: row.subdomain,
+    description: row.description,
+    language: row.primary_language,
+    monthlyPricePaise: row.monthly_price_paise,
+  };
+}
 export interface PublicationService {
   create(
     ownerId: string,
@@ -25,6 +35,7 @@ export interface PublicationService {
   ): Promise<ReturnType<typeof publicationView>>;
   getOwned(publicationId: string, ownerId: string): Promise<ReturnType<typeof publicationView>>;
   getBySubdomain(subdomain: string): Promise<PublicationRow>;
+  getPublic(subdomain: string): Promise<ReturnType<typeof publicPublicationView>>;
   listOwned(
     ownerId: string,
     cursor: string | undefined,
@@ -60,6 +71,11 @@ export function createPublicationService({
       const row = await publicationRepo.findBySubdomain(subdomain);
       if (!row) throw new NotFoundError();
       return row;
+    },
+    async getPublic(subdomain) {
+      const row = await publicationRepo.findBySubdomain(subdomain);
+      if (!row) throw new NotFoundError();
+      return publicPublicationView(row);
     },
     async listOwned(ownerId, cursor, limit) {
       const rows = await publicationRepo.listOwned(ownerId, cursor, limit + 1);

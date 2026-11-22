@@ -86,10 +86,19 @@ export function createPublicPostRouter({
   postService,
   authService,
 }: {
-  postService: Pick<PostService, 'publicPreview' | 'publicFull'>;
+  postService: Pick<PostService, 'publicPreview' | 'publicFull' | 'listPublic'>;
   authService?: AuthService;
 }): Router {
   const router = Router({ mergeParams: true });
+  router.get<{ subdomain: string }>('/posts', async (req, res) => {
+    const query = cursorPaginationSchema.parse(req.query);
+    const result = await postService.listPublic(
+      subdomain.parse(req.params['subdomain']), query.cursor, query.limit,
+    );
+    // List pages have no edge purge yet; keep them fresh on publish and unpublish.
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(result);
+  });
   router.get<{ subdomain: string; slug: string }>('/posts/:slug/full', async (req, res) => {
     res.setHeader('Cache-Control', 'private, no-store');
     const user =

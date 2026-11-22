@@ -29,6 +29,9 @@ jobs:
       - name: Run Lint and Typecheck
         run: pnpm lint
 
+      - name: Build public web app
+        run: pnpm --filter @vichaar/web build
+
   test:
     name: Test & Boundary Verification
     runs-on: ubuntu-latest

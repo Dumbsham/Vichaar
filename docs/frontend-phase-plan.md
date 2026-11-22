@@ -1,10 +1,10 @@
 # Vichaar frontend: phased implementation plan
 
-Status: planned · 2026-11-22
+Status: F0 and F1 implemented locally · 2026-11-22
 
 This is the **web app track of Phase 8**. Build a small, complete Next.js frontend for reading, subscribing, paying in Razorpay test mode, and writing. Each phase should leave a usable slice of the product and pass its own checks before the next one begins. The original [MasterPlan](MasterPlan.md) also includes a deployment blueprint, backups, and infrastructure work in Phase 8; those are separate from this frontend plan.
 
-There is no `apps/web` today. The Express API remains the authority for authentication, tenant access, consent, payment state, HTML sanitization, and delivery. A few read endpoints needed by the UI are missing; they are listed below rather than assumed to exist.
+`apps/web` now contains the F0/F1 reading app. The Express API remains the authority for authentication, tenant access, consent, payment state, HTML sanitization, and delivery. The later screens and their remaining API gaps are listed below.
 
 ## The product we are making
 
@@ -66,7 +66,7 @@ Before moving email links to the web origin, support compatibility paths for exi
 | Account signup, login, logout | Existing `/auth/*` endpoints with an HttpOnly session cookie. | Verify cookie and `Origin` behavior through the web origin; do not make a second auth system. |
 | Writer publications and posts | Owner-only list/create/read/update/publish routes exist. | Reuse shared schemas and preserve version conflicts in the editor UI. |
 | One public post and paid full body | Public preview and separate authenticated `/full` exist. | Render only API-sanitized preview HTML publicly. Full body is private and never enters shared caching. |
-| Publication home | Public publication metadata and paginated **published** post list are not exposed. | Add narrow public read routes, scoped by `publicationId`, with cursor pagination, safe cache headers, and tests. Never reuse the owner-only draft list. |
+| Publication home | F1 added public metadata and a publication-scoped, cursor-paginated **published** post list. | Keep these reads bounded and free of owner details, drafts, and full paid HTML. |
 | Subscribe, confirm, unsubscribe, preferences | API actions exist; old HTML pages are temporary. | Build the web forms and compatibility links; keep the API's generic subscribe response. |
 | Razorpay checkout and reader subscription status | Test-mode checkout, status list, cancel, webhooks, and reconciliation exist. | Open Razorpay only after the backend creates checkout. A browser callback never grants paid access; wait for backend status. |
 | Writer subscriber list | No owner list endpoint exists. | Add an owner-authorized, publication-scoped, cursor-paginated read endpoint with bounded fields. Test cross-tenant denial. |
@@ -90,6 +90,8 @@ The missing reads are support for existing product requirements, not a new featu
 
 ### F0 — Foundation and design proof
 
+**Status:** Implemented locally. The `/design-proof` page uses explicitly labelled sample English, Hindi, and Tamil text. The web app uses local Noto Sans fonts, Zod response parsing at one API boundary, and allow-listed same-origin `/api/*` rewrites. Cookie and Origin behavior is covered by a live rewrite test; metrics and webhooks are not exposed through the web origin.
+
 **Build:** Create `apps/web` in the pnpm workspace with strict TypeScript, App Router, Tailwind tokens, a minimal layout, `/api/*` integration, typed API helpers, and a small component set. Make a real page proof using a sample English post, a Hindi title, and a Tamil paragraph. Define the paper/ink palette and type scale in code. Verify the Express cookie flow through the web origin before building account screens.
 
 **Review:** Compare screenshots at 360 and 1440 px. Check real text wrapping, focus states, contrast, and a no-JavaScript read view. Keep only components used by the proof. Write down any API contract adjustments discovered during this phase.
@@ -97,6 +99,12 @@ The missing reads are support for existing product requirements, not a new featu
 **Exit:** `pnpm dev` opens the web app; a public proof page looks intentional on mobile and desktop; the cookie integration test passes; lint, typecheck, and existing tests remain green.
 
 ### F1 — Public reading
+
+**Status:** Implemented locally. `/p/[subdomain]` and `/p/[subdomain]/[slug]` read live API data with private server fetches. Publication metadata and post-list API responses use `no-store` until edge invalidation exists. The existing single-preview API keeps its short public cache and Redis invalidation. Next.js does not persistently cache these pages. No CDN or static-on-publish claim is made.
+
+**Static HTML decision for release:** Keep F1's dynamic server rendering while building the reader and writer flows. In F5, generate public HTML from a publish/unpublish event, store it in the existing deployment's local artifact path, and purge only the changed publication index and post URL at the CDN. A paid post's generated HTML must contain only its preview. Validate the event replay and purge path before enabling a shared edge cache. ADR-007 already describes this architecture; record a new ADR only if implementation changes the decision.
+
+**Visual review:** [Desktop design proof](../output/playwright/f0-design-desktop.png), [tablet design proof](../output/playwright/f0-design-tablet.png), and [mobile live publication](../output/playwright/f1-publication-mobile.png). The review also checked a free article at 1440 px, a paid preview at 360 px, and no horizontal overflow at 320 px. The paid preview screenshot is [here](../output/playwright/f1-paid-preview-mobile.png). The sample publication exists only in the local development database; `/design-proof` is the stable, labelled preview route.
 
 **Build:** Add the narrow public publication and published-post list API reads. Build `/p/[subdomain]` and `/p/[subdomain]/[slug]` with real data, publication metadata, language tags, dates, excerpts, post body, and a paid preview. Add page title and description metadata, readable 404s, and a simple loading state. Keep the body narrow and links obvious.
 

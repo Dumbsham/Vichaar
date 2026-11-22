@@ -87,6 +87,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/.turbo/**', '**/coverage/**', '**/fixtures/**'],
+    ignores: ['**/dist/**', '**/node_modules/**', '**/.turbo/**', '**/.next/**', '**/.playwright-cli/**', '**/coverage/**', '**/fixtures/**'],
   },
 );
