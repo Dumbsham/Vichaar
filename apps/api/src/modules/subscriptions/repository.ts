@@ -21,13 +21,31 @@ interface PendingDeliveryRow {
   send_immediately: boolean;
 }
 export interface SubscriptionRepository {
+  listActive(
+    publicationId: string,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<
+    Array<{
+      id: string;
+      email: string;
+      slot: 'morning' | 'afternoon' | 'evening';
+      timezone: string;
+      created_at: Date;
+    }>
+  >;
   request(
     publicationId: string,
     input: SubscribeInput,
     tokenFactory: (id: string, exp: number) => string,
     correlationId: string,
   ): Promise<void>;
-  confirm(publicationId: string, id: string, token: string, correlationId: string): Promise<boolean>;
+  confirm(
+    publicationId: string,
+    id: string,
+    token: string,
+    correlationId: string,
+  ): Promise<boolean>;
   unsubscribe(publicationId: string, id: string): Promise<void>;
   find(publicationId: string, id: string): Promise<SubscriptionRow | null>;
   updatePreferences(publicationId: string, id: string, input: PreferencesInput): Promise<boolean>;
@@ -36,6 +54,21 @@ const hash = (token: string) => createHash('sha256').update(token).digest('hex')
 
 export function createSubscriptionRepository({ pool }: { pool: Pool }): SubscriptionRepository {
   return {
+    async listActive(publicationId, cursor, limit) {
+      const result = await pool.query<{
+        id: string;
+        email: string;
+        slot: 'morning' | 'afternoon' | 'evening';
+        timezone: string;
+        created_at: Date;
+      }>(
+        `SELECT id,email,slot,timezone,created_at FROM subscriptions
+         WHERE publication_id=$1 AND status='active' ${cursor ? 'AND id>$2::uuid' : ''}
+         ORDER BY id LIMIT ${cursor ? '$3' : '$2'}`,
+        cursor ? [publicationId, cursor, limit] : [publicationId, limit],
+      );
+      return result.rows;
+    },
     async request(publicationId, input, tokenFactory, correlationId) {
       const client = await pool.connect();
       try {

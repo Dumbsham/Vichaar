@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { PublicationHeader } from '@/components/publication-header';
 import { PostListItem } from '@/components/post-list-item';
+import { SubscribeForm } from '@/components/subscribe-form';
 import { getPublicPublication, listPublicPosts, PublicApiError } from '@/lib/api/public';
 
 type Props = {
@@ -63,6 +64,7 @@ export default async function PublicationPage({ params, searchParams }: Props) {
           </Link>
         )}
       </section>
+      <SubscribeForm subdomain={subdomain} />
     </div>
   );
 }

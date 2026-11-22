@@ -66,7 +66,7 @@ export function createPipeline(deps: PipelineDeps) {
                   to: recipient.email,
                   from: deps.fromAddress,
                   subject: 'Confirm your Vichaar subscription',
-                  html: `<p>Confirm your subscription: <a href="${base}/subscribe-demo?token=${token}">Confirm</a></p><p>After confirming, <a href="${base}/subscriptions/preferences/${manageToken}">set your delivery preferences</a>.</p>`,
+                  html: `<p>Confirm your subscription: <a href="${base}/confirm?token=${token}">Confirm</a></p><p>After confirming, <a href="${base}/preferences/${manageToken}">set your delivery preferences</a>.</p>`,
                   headers: {},
                 });
               } catch {
@@ -107,7 +107,9 @@ export function createPipeline(deps: PipelineDeps) {
                     correlationId: event.correlationId,
                   }
                 : event;
-            const next = await withSpan('postgres.delivery.fanout', event.correlationId, () => repo.fanout(input));
+            const next = await withSpan('postgres.delivery.fanout', event.correlationId, () =>
+              repo.fanout(input),
+            );
             if (next)
               await events.send({
                 type: 'FanoutPage',
@@ -120,7 +122,10 @@ export function createPipeline(deps: PipelineDeps) {
               });
           }
           await events.delete(message.receipt);
-          logger.info({ worker: 'fanout', eventType: event.type, correlationId: event.correlationId }, 'event processed');
+          logger.info(
+            { worker: 'fanout', eventType: event.type, correlationId: event.correlationId },
+            'event processed',
+          );
         });
       }
       return messages.length;
@@ -143,9 +148,16 @@ export function createPipeline(deps: PipelineDeps) {
       const messages = await sends.receive();
       for (const message of messages) {
         await withSpan('worker.send_batch', message.body.correlationId, async () => {
-          const rows = await withSpan('postgres.delivery.claim', message.body.correlationId, () => repo.claim(message.body.keys));
+          const rows = await withSpan('postgres.delivery.claim', message.body.correlationId, () =>
+            repo.claim(message.body.keys),
+          );
           const links = rows.length ? await repo.trackedLinks(message.body.keys) : [];
-          const linkIds = new Map(links.map((link) => [`${link.publication_id}:${link.post_id}:${link.target_url}`, link.id]));
+          const linkIds = new Map(
+            links.map((link) => [
+              `${link.publication_id}:${link.post_id}:${link.target_url}`,
+              link.id,
+            ]),
+          );
           const results: SendResult[] = [];
           for (const groupOfFive of group(rows, 5)) {
             const groupResults = await Promise.all(
@@ -189,18 +201,39 @@ export function createPipeline(deps: PipelineDeps) {
                   Math.floor(Date.now() / 1000) + 365 * 86400,
                 );
                 const unsubscribeUrl = `${base}/unsubscribe/${token}`;
-                const preferencesUrl = `${base}/subscriptions/preferences/${token}`;
-                const postUrl = `${base}/public/${encodeURIComponent(row.subdomain)}/posts/${encodeURIComponent(row.slug)}`;
+                const oneClickUrl = `${unsubscribeUrl}/one-click`;
+                const preferencesUrl = `${base}/preferences/${token}`;
+                const postUrl = `${base}/p/${encodeURIComponent(row.subdomain)}/${encodeURIComponent(row.slug)}`;
                 const expiry = Math.floor(Date.now() / 1000) + 365 * 86400;
-                const trackBase = (deps.trackingBaseUrl ?? 'http://localhost:4001').replace(/\/$/, '');
+                const trackBase = (deps.trackingBaseUrl ?? 'http://localhost:4001').replace(
+                  /\/$/,
+                  '',
+                );
                 const trackingSecret = deps.trackingSecret ?? deps.tokenSecret;
-                const htmlBody = (row.access === 'paid' ? row.html_preview : row.html_full).replace(/href="([^"]+)"/g, (original, target: string) => {
-                  const linkId = linkIds.get(`${row.publication_id}:${row.post_id}:${target}`);
-                  if (!linkId) return original;
-                  const clickToken = signTrackingToken(trackingSecret, { publicationId: row.publication_id, postId: row.post_id, subscriptionId: row.subscription_id, linkId, kind: 'click', exp: expiry });
-                  return `href="${trackBase}/t/c/${clickToken}"`;
+                const htmlBody = (row.access === 'paid' ? row.html_preview : row.html_full).replace(
+                  /href="([^"]+)"/g,
+                  (original, target: string) => {
+                    const linkId = linkIds.get(`${row.publication_id}:${row.post_id}:${target}`);
+                    if (!linkId) return original;
+                    const clickToken = signTrackingToken(trackingSecret, {
+                      publicationId: row.publication_id,
+                      postId: row.post_id,
+                      subscriptionId: row.subscription_id,
+                      linkId,
+                      kind: 'click',
+                      exp: expiry,
+                    });
+                    return `href="${trackBase}/t/c/${clickToken}"`;
+                  },
+                );
+                const openToken = signTrackingToken(trackingSecret, {
+                  publicationId: row.publication_id,
+                  postId: row.post_id,
+                  subscriptionId: row.subscription_id,
+                  linkId: null,
+                  kind: 'open',
+                  exp: expiry,
                 });
-                const openToken = signTrackingToken(trackingSecret, { publicationId: row.publication_id, postId: row.post_id, subscriptionId: row.subscription_id, linkId: null, kind: 'open', exp: expiry });
                 try {
                   const messageId = await provider.send({
                     to: row.email,
@@ -208,7 +241,7 @@ export function createPipeline(deps: PipelineDeps) {
                     subject: cleanHeader(row.title),
                     html: `${htmlBody}<p><a href="${postUrl}">Read online</a></p><p><a href="${unsubscribeUrl}">Unsubscribe</a> · <a href="${preferencesUrl}">Delivery preferences</a></p><img src="${trackBase}/t/o/${openToken}.gif" width="1" height="1" alt="">`,
                     headers: {
-                      'List-Unsubscribe': `<${unsubscribeUrl}>`,
+                      'List-Unsubscribe': `<${oneClickUrl}>`,
                       'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
                     },
                   });
@@ -234,7 +267,9 @@ export function createPipeline(deps: PipelineDeps) {
             );
             results.push(...groupResults);
           }
-          await withSpan('postgres.delivery.record', message.body.correlationId, () => repo.record(results));
+          await withSpan('postgres.delivery.record', message.body.correlationId, () =>
+            repo.record(results),
+          );
           deps.metrics?.increment('sender_emails_total', results.length);
           for (const result of results) {
             if (result.status === 'sent') deps.metrics?.increment('sender_sent_total');
@@ -245,7 +280,15 @@ export function createPipeline(deps: PipelineDeps) {
               deps.metrics?.increment('sender_unknown_outcome_total');
           }
           await sends.delete(message.receipt);
-          logger.info({ worker: 'sender', correlationId: message.body.correlationId, sent: results.filter((result) => result.status === 'sent').length, failed: results.filter((result) => result.status === 'failed').length }, 'send batch processed');
+          logger.info(
+            {
+              worker: 'sender',
+              correlationId: message.body.correlationId,
+              sent: results.filter((result) => result.status === 'sent').length,
+              failed: results.filter((result) => result.status === 'failed').length,
+            },
+            'send batch processed',
+          );
         });
       }
       return messages.length;

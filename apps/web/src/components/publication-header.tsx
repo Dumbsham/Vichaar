@@ -25,6 +25,14 @@ export function PublicationHeader({
       {publication.description && (
         <p className="publication-description">{publication.description}</p>
       )}
+      {!preview && (
+        <Link
+          className="read-link publication-account-link"
+          href={`/account/subscriptions?publicationId=${publication.id}`}
+        >
+          Your subscription status
+        </Link>
+      )}
       <div className="publication-rule" aria-hidden="true">
         <span />
       </div>

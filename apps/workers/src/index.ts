@@ -14,7 +14,7 @@ const config = z
     SQS_QUEUE_BASE_URL: z.string().url().default('http://localhost:9324/queue'),
     AWS_REGION: z.string().default('us-east-1'),
     TOKEN_HMAC_SECRET: z.string().min(32).default('local_development_hmac_secret_32chars_min!'),
-    PUBLIC_BASE_URL: z.string().url().default('http://localhost:4000'),
+    PUBLIC_BASE_URL: z.string().url().default('http://localhost:3000'),
     EMAIL_FROM: z.string().email().default('newsletter@vichaar.test'),
     EMAIL_PROVIDER: z.enum(['smtp', 'ses', 'stub']).default('smtp'),
     MAILPIT_SMTP_HOST: z.string().default('localhost'),
@@ -23,11 +23,17 @@ const config = z
     RAZORPAY_KEY_ID: z.string().optional(),
     RAZORPAY_KEY_SECRET: z.string().optional(),
     CLICKHOUSE_URL: z.string().url().default('http://localhost:8123'),
-    CLICKHOUSE_DB: z.string().regex(/^[a-zA-Z0-9_]+$/).default('vichaar'),
+    CLICKHOUSE_DB: z
+      .string()
+      .regex(/^[a-zA-Z0-9_]+$/)
+      .default('vichaar'),
     CLICKHOUSE_USER: z.string().optional(),
     CLICKHOUSE_PASSWORD: z.string().optional(),
     TRACKING_BASE_URL: z.string().url().default('http://localhost:4001'),
-    TRACKING_HMAC_SECRET: z.string().min(32).default('local_development_tracking_secret_32chars_min!'),
+    TRACKING_HMAC_SECRET: z
+      .string()
+      .min(32)
+      .default('local_development_tracking_secret_32chars_min!'),
     WORKER_ROLE: z.enum([
       'relay',
       'fanout',
@@ -126,7 +132,7 @@ async function main() {
               ? 0
               : config.WORKER_ROLE === 'analytics'
                 ? await queues.tracks.depth()
-              : await queues.sends.depth();
+                : await queues.sends.depth();
       metrics.setQueueDepth(queueDepth);
       metrics.increment('worker_runs_total');
       metrics.increment('worker_duration_ms_total', Date.now() - started);
@@ -145,17 +151,26 @@ async function main() {
         const cpu = process.cpuUsage(cpuStarted);
         metrics.increment('sender_cpu_ms_total', (cpu.user + cpu.system) / 1000);
       }
-      logger.info({ worker: config.WORKER_ROLE, result, durationMs: Date.now() - started }, 'worker run completed');
+      logger.info(
+        { worker: config.WORKER_ROLE, result, durationMs: Date.now() - started },
+        'worker run completed',
+      );
     } catch (error) {
       metrics.increment('worker_errors_total');
-      logger.error({ worker: config.WORKER_ROLE, errorType: error instanceof Error ? error.name : 'unknown' }, 'worker run failed');
+      logger.error(
+        { worker: config.WORKER_ROLE, errorType: error instanceof Error ? error.name : 'unknown' },
+        'worker run failed',
+      );
     }
     if (running) await new Promise<void>((resolve) => setTimeout(resolve, role.interval));
   }
 }
 main()
   .catch((error: unknown) => {
-    logger.error({ worker: config.WORKER_ROLE, errorType: error instanceof Error ? error.name : 'unknown' }, 'worker startup failed');
+    logger.error(
+      { worker: config.WORKER_ROLE, errorType: error instanceof Error ? error.name : 'unknown' },
+      'worker startup failed',
+    );
     process.exitCode = 1;
   })
   .finally(async () => {

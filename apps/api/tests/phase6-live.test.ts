@@ -283,7 +283,7 @@ describe('Phase 6 with real Postgres, Redis, and ElasticMQ', () => {
     ).toBe(202);
     await pipeline.relay();
     await pipeline.fanoutOnce();
-    const token = sent.at(-1)?.html.match(/subscribe-demo\?token=([^"<]+)/)?.[1];
+    const token = sent.at(-1)?.html.match(/\/confirm\?token=([^"<]+)/)?.[1];
     expect(token).toBeDefined();
     expect((await request(app).post('/subscriptions/confirm').send({ token })).status).toBe(204);
     expect((await request(app).post('/subscriptions/confirm').send({ token })).status).toBe(204);

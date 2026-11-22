@@ -16,6 +16,12 @@ export default function Home() {
         in the language they were written.
       </p>
       <div className="home-action">
+        <Link className="text-action" href="/signup">
+          Create an account <span aria-hidden="true">↗</span>
+        </Link>
+        <Link className="text-action" href="/studio">
+          Open writing desk <span aria-hidden="true">↗</span>
+        </Link>
         <Link className="text-action" href="/design-proof">
           See the reading layout <span aria-hidden="true">↗</span>
         </Link>

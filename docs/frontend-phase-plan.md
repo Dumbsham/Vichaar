@@ -1,10 +1,10 @@
 # Vichaar frontend: phased implementation plan
 
-Status: F0 and F1 implemented locally · 2026-11-22
+Status: F0–F3 implemented locally · 2026-11-23
 
 This is the **web app track of Phase 8**. Build a small, complete Next.js frontend for reading, subscribing, paying in Razorpay test mode, and writing. Each phase should leave a usable slice of the product and pass its own checks before the next one begins. The original [MasterPlan](MasterPlan.md) also includes a deployment blueprint, backups, and infrastructure work in Phase 8; those are separate from this frontend plan.
 
-`apps/web` now contains the F0/F1 reading app. The Express API remains the authority for authentication, tenant access, consent, payment state, HTML sanitization, and delivery. The later screens and their remaining API gaps are listed below.
+`apps/web` now contains the F0–F3 reading, subscription, and writer workspace. The Express API remains the authority for authentication, tenant access, consent, payment state, HTML sanitization, and delivery. The remaining screens and API gaps are listed below.
 
 ## The product we are making
 
@@ -69,7 +69,7 @@ Before moving email links to the web origin, support compatibility paths for exi
 | Publication home | F1 added public metadata and a publication-scoped, cursor-paginated **published** post list. | Keep these reads bounded and free of owner details, drafts, and full paid HTML. |
 | Subscribe, confirm, unsubscribe, preferences | API actions exist; old HTML pages are temporary. | Build the web forms and compatibility links; keep the API's generic subscribe response. |
 | Razorpay checkout and reader subscription status | Test-mode checkout, status list, cancel, webhooks, and reconciliation exist. | Open Razorpay only after the backend creates checkout. A browser callback never grants paid access; wait for backend status. |
-| Writer subscriber list | No owner list endpoint exists. | Add an owner-authorized, publication-scoped, cursor-paginated read endpoint with bounded fields. Test cross-tenant denial. |
+| Writer subscriber list | F3 added an owner-authorized, publication-scoped, cursor-paginated active-reader endpoint. | Keep the fields bounded and verify tenant isolation as the table grows. |
 | Writer analytics | Opens/clicks by post/day and milestones exist; current subscriber count is on publication data. | Display available data. A paid-conversion count or historical subscriber graph needs a measured, tenant-scoped aggregate endpoint; do not invent values or draw an empty chart as real data. |
 | Quote cards | Text-checked PNG creation and image retrieval exist. | Let the reader select allowed text, submit it, and preview/download the returned PNG. Preserve paid-preview limits. |
 | Static public HTML on publish | Architectural intent exists, but the current API serves JSON previews. | Decide and document a publish-triggered generation/invalidation flow before release. Early UI phases may server-render the public preview; do not claim static-on-publish or CDN behavior until implemented and tested. |
@@ -114,6 +114,8 @@ The missing reads are support for existing product requirements, not a new featu
 
 ### F2 — Subscription, accounts, and paid reading
 
+**Status:** Implemented locally. Account, confirmation, preferences, unsubscribe, paid status, and paywall pages use the existing API through the same-origin rewrite. Old email paths have web compatibility routes; new emails point to the web origin. Live tests cover the paid preview, entitlement, cancellation, and token flows. Browser review covered signup, subscription, preferences, unsubscribe, and a mobile paid preview. Real Razorpay checkout remains unverified until owner-supplied test keys and a reachable test webhook are configured.
+
 **Build:** Add signup/login/logout; a three-choice delivery slot selector; a timezone field with `Asia/Kolkata` default; subscribe, confirm, preferences, and unsubscribe pages; reader subscription status; Razorpay test-mode checkout; and a clear paid-access state. Complete the email-link compatibility routes before changing `PUBLIC_BASE_URL`. Keep the subscribe result deliberately generic, as the API does.
 
 **Review:** Test incorrect credentials, already-used confirmation and unsubscribe tokens, missed webhook/reconciliation delay, cancelled-but-still-entitled access, 429 responses, and Redis/entitlement 503 behavior. The browser shows “Payment is being confirmed” while backend status is pending. No frontend event or Razorpay callback unlocks the post.
@@ -121,6 +123,8 @@ The missing reads are support for existing product requirements, not a new featu
 **Exit:** A reader can request confirmation, confirm, change delivery time, unsubscribe, and see the correct paywall decision. Razorpay works in test mode when owner-supplied test keys are configured; without keys the page explains that checkout is unavailable. Playwright covers subscribe, paywall allow/deny, and unsubscribe.
 
 ### F3 — Writer workspace
+
+**Status:** Implemented locally. Writers can create and select publications, edit settings, and see real subscriber counts, milestones, streaks, active readers, and analytics. The new reader endpoint returns at most 50 records per page and rejects other owners. Its existing partial index supports the cursor query; PostgreSQL chose a sequential scan for the tiny local table, while a forced index plan used `subscriptions_active_page_idx`. The browser review covered empty states, settings, cross-tenant denial, a 360 px layout, and analytics recovery after ClickHouse was stopped and restarted. [Desktop overview](../output/playwright/f3-overview-desktop.png) · [Mobile overview](../output/playwright/f3-overview-mobile.png).
 
 **Build:** Add publication create/list/settings, a calm overview, current subscriber count, milestones, a bounded owner-only reader list, and opens/clicks by post/day. Use one small chart only if it makes the data easier to read; always include a table or labels. If paid-conversion count is shown, add the minimal owner-only aggregate endpoint first. Do not add a fabricated subscriber-growth line.
 

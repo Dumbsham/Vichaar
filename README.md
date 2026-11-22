@@ -17,7 +17,7 @@
 
 </div>
 
-> **Current status:** Phases 1–7 and frontend F0/F1 are implemented locally. Public reading pages are available in Next.js; subscription, account, writer, and quote-card screens are later frontend phases. The planned 2 vCPU demo capacity and production email throughput remain unverified. Razorpay requests need your own test keys; automated tests use a stub provider. Deployment containers remain a later phase.
+> **Current status:** Phases 1–7 and frontend F0–F3 are implemented locally. Next.js has public reading, subscription, account, and writer workspace pages. Writing/editor and quote-card screens remain in F4/F5. The planned 2 vCPU demo capacity and production email throughput remain unverified. Razorpay requests need your own test keys; automated tests use a stub provider. Deployment containers remain a later phase.
 
 ## What works today
 
@@ -27,13 +27,15 @@
 - **Publishing:** The API sanitizes post HTML and commits the post, tracked links, writing streak, and a `PostPublished` outbox event in one transaction. Repeating the publish request does not create a second event.
 - **Public previews:** A published post can be read by subdomain and slug. A paid post's full body is not returned by this public endpoint.
 - **Public web reading:** Next.js serves publication pages and free post bodies at `/p/:subdomain` and `/p/:subdomain/:slug`. Paid posts show only their safe preview. Public lists use cursor pagination and exclude drafts and other publications. `/design-proof` shows clearly labelled sample typography in English, Hindi, and Tamil.
+- **Reader web flows:** Next.js provides signup/login/logout, confirmation, delivery preferences, unsubscribe, subscription status, and paid reading. The browser opens Razorpay test checkout only after the API creates it; backend entitlement remains authoritative.
+- **Writer workspace:** `/studio` lets an owner create and select publications. The overview, readers, analytics, and settings screens use owner-scoped API data. The active-reader API is cursor-paginated and returns at most 50 readers per page.
 - **Project foundation:** The pnpm workspace, strict TypeScript, module-boundary lint rule, PostgreSQL migrations, health checks, local Compose dependencies, and CI are in place.
-- **Subscriptions:** Readers request a confirmation email without exposing whether an address is already subscribed. Signed links confirm once; signed unsubscribe links add a suppression and stop pending sends. Readers can change slot and timezone while deliveries remain pending. `/subscribe-demo` is a plain HTML verification page.
+- **Subscriptions:** Readers request a confirmation email without exposing whether an address is already subscribed. Signed links confirm once; signed unsubscribe links add a suppression and stop pending sends. Readers can change slot and timezone while deliveries remain pending. New email links open the web pages; older API-host paths remain available.
 - **Delivery:** Five delivery worker roles relay outbox events through ElasticMQ, fan out active subscribers in pages, claim due rows fairly with a daily publication cap, send through a stub, Mailpit SMTP, or SES sandbox provider, and sweep stale rows. A sender claims a row before calling the provider; ambiguous outcomes are flagged and never automatically retried. Monthly partitions and a default partition hold the delivery ledger.
 - **Paid access:** Logged-in, confirmed newsletter readers can start a Razorpay test-mode subscription. Signed webhooks enter a durable inbox and the hooks queue; a worker applies them once and rejects stale events. Paid bodies require a database-backed entitlement with a 60-second Redis cache. A separate hourly worker reconciles missed payment events. Cancellation and subscription status endpoints are available.
 - **Quote cards and milestones:** Readers can create a PNG from verified post text in English, Hindi, or Tamil. Paid posts allow preview text unless the reader is entitled. Cards are cached by a stable hash and removed after unpublish. Confirmation events create 10, 100, and 1,000 subscriber milestones once. Owners can read milestone history and their IST writing streak.
 
-Scheduled posts are released by the scheduler when due. Email post-body links still point to the API until the frontend email-link flows are complete. Analytics statistics are available to publication owners.
+Scheduled posts are released by the scheduler when due. Email post-body and account-action links point to the web origin. Analytics statistics are available to publication owners.
 
 ## Run the API and frontend locally
 
@@ -54,13 +56,13 @@ The workers need local SQS credentials exported, such as `AWS_ACCESS_KEY_ID=test
 
 Phase 5 starts a separate tracking listener at `http://localhost:4001` and an analytics worker. Set the same `TRACKING_HMAC_SECRET` (at least 32 characters) for both processes. The local Compose ClickHouse user and password are in `.env.example`; existing ClickHouse containers created with different credentials need matching `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`. Writer statistics are at `GET /publications/:pubId/stats`. Tracking metrics are at port 4001 `/metrics`, and analytics worker metrics use port 9107.
 
-For Phase 6, `POST /public/:subdomain/posts/:slug/quote-cards` accepts `{ "quote": "text from the post" }` and returns a PNG URL. `GET /publications/:pubId/milestones` requires the owner's session. `QUOTE_CARD_DIR` defaults to `./data/quote-cards` relative to the repository root; the API and fanout worker use the same directory. No new API key is needed. The worker's email provider must already be configured to notify writers. The full quote-card UI arrives with the Next.js frontend.
+For Phase 6, `POST /public/:subdomain/posts/:slug/quote-cards` accepts `{ "quote": "text from the post" }` and returns a PNG URL. `GET /publications/:pubId/milestones` requires the owner's session. `QUOTE_CARD_DIR` defaults to `./data/quote-cards` relative to the repository root; the API and fanout worker use the same directory. No new API key is needed. The worker's email provider must already be configured to notify writers. The quote-card web UI is planned for F5.
 
 ### Razorpay test-mode setup
 
 1. In the Razorpay dashboard, switch to **Test Mode** and create API keys. Export `RAZORPAY_KEY_ID` (`rzp_test_...`) and `RAZORPAY_KEY_SECRET` in the API and worker environments. The API refuses live-mode keys.
 2. Create a **separate** webhook secret (at least 32 characters), export it as `RAZORPAY_WEBHOOK_SECRET` in the API environment, and configure the same secret for the test-mode webhook. Subscribe to subscription lifecycle events and point the webhook to `POST /webhooks/razorpay` on a reachable HTTPS URL. A local-only `localhost` URL cannot receive Razorpay's remote webhook.
-3. A writer sets `monthlyPricePaise` on their publication. A reader creates an account with their newsletter email, confirms that newsletter subscription, then calls `POST /public/:subdomain/checkout` while signed in. The response provides the Razorpay test key ID and subscription ID for a future browser checkout UI. `GET /me/subscriptions?publicationId=:id` shows processing or active status. The browser payment callback never unlocks content; only a verified webhook or reconciliation does.
+3. A writer sets a monthly price in `/studio/:publicationId/settings`. A reader creates an account with their newsletter email, confirms that newsletter subscription, then opens checkout on the paid post. The API returns the Razorpay test key ID and subscription ID for the browser checkout. `GET /me/subscriptions?publicationId=:id` shows processing or active status. The browser payment callback never unlocks content; only a verified webhook or reconciliation does.
 
 No real charge or live payment is supported. Automated webhook tests use signed synthetic events and a stub provider, so they run without Razorpay credentials. The account-email verification and remote-create crash gap in [ADR-012](docs/adr/012_billingWebhookInbox.md) must be closed before any live-payment launch.
 
@@ -78,6 +80,7 @@ No real charge or live payment is supported. Automated webhook tests use signed 
 | `GET`          | `/public/:subdomain`                          | Read public publication metadata                   |
 | `GET`          | `/public/:subdomain/posts?cursor=&limit=`     | Read only published posts, with bounded pagination |
 | `GET`          | `/publications/:pubId/stats`                  | Publication-scoped open and click rollups          |
+| `GET`          | `/publications/:pubId/readers?cursor=&limit=` | Owner-only active readers, at most 50 per page     |
 | `GET`          | `:4001/t/o/:token.gif`, `:4001/t/c/:token`    | Open pixel and signed click redirect               |
 | `GET`          | `/healthz`, `/readyz`                         | Liveness and database readiness                    |
 | `POST`         | `/public/:subdomain/subscribe`                | Request double opt-in; always returns `202`        |
@@ -120,7 +123,7 @@ The local [Compose file](infra/compose/docker-compose.yml) defines PostgreSQL, a
 
 ```text
 apps/api/          Express API: auth, publications, posts, health
-apps/web/          Next.js public reading app and design proof
+apps/web/          Next.js reading, reader account, and writer workspace
 apps/workers/      Delivery workers and email providers
 packages/db/       PostgreSQL client, Drizzle schemas, SQL migrations
 packages/queue/    Typed SQS-compatible queues
@@ -144,7 +147,9 @@ docs/              Design, flows, threat model, failure analysis, ADRs
 - [ ] Phase 8: Next.js frontend and deployment blueprint
   - [x] Frontend F0: foundation, editorial design proof, same-origin API rewrite
   - [x] Frontend F1: publication and post reading with public paginated API reads
-  - [ ] Frontend F2–F5 and separate deployment blueprint
+  - [x] Frontend F2: reader account, subscription, and paid reading
+  - [x] Frontend F3: writer overview, readers, analytics, and settings
+  - [ ] Frontend F4–F5 and separate deployment blueprint
 
 The detailed sequence and scope are in [docs/MasterPlan.md](docs/MasterPlan.md). Custom domains and CSV subscriber import are outside the v1 scope.
 

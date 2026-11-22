@@ -29,6 +29,7 @@ import {
 import {
   createSubscriptionRouter,
   createConfirmationRouter,
+  createReaderRouter,
   subscribeSchema,
 } from './modules/subscriptions/index.js';
 import { createAnalyticsRouter } from './modules/analytics/index.js';
@@ -116,9 +117,16 @@ export function createServer(container: AppContainer): Express {
     next();
   });
   app.use(async (req, _res, next) => {
-    if (req.method === 'POST' && /^\/public\/[a-z0-9-]+\/posts\/[^/]+\/quote-cards$/.test(req.path) && rateLimiter) {
+    if (
+      req.method === 'POST' &&
+      /^\/public\/[a-z0-9-]+\/posts\/[^/]+\/quote-cards$/.test(req.path) &&
+      rateLimiter
+    ) {
       const allowed = await rateLimiter.consume(`quote-card:${req.ip ?? 'unknown'}`, 5, 60);
-      if (!allowed) { next(new AppError('Too many quote card requests', 429, 'RATE_LIMITED')); return; }
+      if (!allowed) {
+        next(new AppError('Too many quote card requests', 429, 'RATE_LIMITED'));
+        return;
+      }
     }
     next();
   });
@@ -175,12 +183,14 @@ export function createServer(container: AppContainer): Express {
               `vichaar_entitlement_cache_hit_ratio ${billing.cacheHits + billing.dbChecks ? billing.cacheHits / (billing.cacheHits + billing.dbChecks) : 0}\n` +
               `vichaar_entitlement_redis_errors_total ${billing.redisErrors}\n`
             : '') +
-          (quotes ? `vichaar_quote_cards_rendered_total ${quotes.rendered}\n` +
-            `vichaar_quote_cards_render_failures_total ${quotes.failures}\n` +
-            `vichaar_quote_cards_render_duration_ms_total ${quotes.renderDurationMsTotal}\n` +
-            `vichaar_quote_cards_render_rejected_total ${quotes.rejected}\n` +
-            `vichaar_quote_cards_cache_hits_total ${quotes.cacheHits}\n` +
-            `vichaar_quote_cards_invalid_quotes_total ${quotes.invalidQuotes}\n` : ''),
+          (quotes
+            ? `vichaar_quote_cards_rendered_total ${quotes.rendered}\n` +
+              `vichaar_quote_cards_render_failures_total ${quotes.failures}\n` +
+              `vichaar_quote_cards_render_duration_ms_total ${quotes.renderDurationMsTotal}\n` +
+              `vichaar_quote_cards_render_rejected_total ${quotes.rejected}\n` +
+              `vichaar_quote_cards_cache_hits_total ${quotes.cacheHits}\n` +
+              `vichaar_quote_cards_invalid_quotes_total ${quotes.invalidQuotes}\n`
+            : ''),
       );
   });
   app.use('/', createHealthRouter({ healthService: container.healthService }));
@@ -203,15 +213,28 @@ export function createServer(container: AppContainer): Express {
       next();
     });
     app.get('/public/:subdomain', async (req, res) => {
-      const result = await publicationService.getPublic(z.string().min(3).max(30).parse(req.params.subdomain));
+      const result = await publicationService.getPublic(
+        z.string().min(3).max(30).parse(req.params.subdomain),
+      );
       res.setHeader('Cache-Control', 'no-store');
       res.json(result);
     });
     app.use('/publications', createPublicationRouter({ publicationService, authService }));
-    if (container.analyticsService) app.use('/publications/:pubId', createAnalyticsRouter(container.analyticsService, authService));
-    if (container.milestoneService) app.use('/publications/:pubId', createMilestoneRouter(container.milestoneService, authService));
+    if (subscriptionService)
+      app.use('/publications/:pubId', createReaderRouter(subscriptionService, authService));
+    if (container.analyticsService)
+      app.use(
+        '/publications/:pubId',
+        createAnalyticsRouter(container.analyticsService, authService),
+      );
+    if (container.milestoneService)
+      app.use(
+        '/publications/:pubId',
+        createMilestoneRouter(container.milestoneService, authService),
+      );
     app.use('/publications/:pubId/posts', createPostRouter({ postService, authService }));
-    if (container.quoteCardService) app.use('/public/:subdomain', createQuoteCardRouter(container.quoteCardService, authService));
+    if (container.quoteCardService)
+      app.use('/public/:subdomain', createQuoteCardRouter(container.quoteCardService, authService));
     app.use('/public/:subdomain', createPublicPostRouter({ postService, authService }));
     if (container.billingService) {
       app.use('/public/:subdomain', createCheckoutRouter(container.billingService, authService));

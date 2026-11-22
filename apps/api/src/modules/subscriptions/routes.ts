@@ -2,6 +2,24 @@ import { Router, type Router as ExpressRouter } from 'express';
 import type { SubscriptionService } from './service.js';
 import { subscribeSchema, confirmSchema, preferencesSchema } from './schemas.js';
 import { z } from 'zod';
+import type { AuthService } from '../auth/index.js';
+
+export function createReaderRouter(service: SubscriptionService, auth: AuthService): ExpressRouter {
+  const router = Router({ mergeParams: true });
+  router.get<{ pubId: string }>('/readers', async (req, res) => {
+    const user = await auth.authenticate(req.cookies?.vichaar_session);
+    const publicationId = z.string().uuid().parse(req.params.pubId);
+    const query = z
+      .object({
+        cursor: z.string().uuid().optional(),
+        limit: z.coerce.number().int().min(1).max(50).default(25),
+      })
+      .parse(req.query);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.json(await service.listReaders(publicationId, user.id, query.cursor, query.limit));
+  });
+  return router;
+}
 
 export function createSubscriptionRouter({
   service,
@@ -26,7 +44,10 @@ export function createConfirmationRouter({
 }): ExpressRouter {
   const router = Router();
   router.post('/confirm', async (req, res) => {
-    await service.confirm(confirmSchema.parse(req.body).token, z.string().parse(req.headers['x-correlation-id']));
+    await service.confirm(
+      confirmSchema.parse(req.body).token,
+      z.string().parse(req.headers['x-correlation-id']),
+    );
     res.status(204).end();
   });
   router.post('/unsubscribe/:token', async (req, res) => {

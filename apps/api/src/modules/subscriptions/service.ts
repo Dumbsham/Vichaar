@@ -6,6 +6,16 @@ import type { SubscriptionRepository } from './repository.js';
 import type { SubscribeInput, PreferencesInput } from './schemas.js';
 
 export interface SubscriptionService {
+  listReaders(
+    publicationId: string,
+    ownerId: string,
+    cursor: string | undefined,
+    limit: number,
+  ): Promise<{
+    items: Array<{ id: string; email: string; slot: string; timezone: string; joinedAt: string }>;
+    nextCursor: string | null;
+    hasMore: boolean;
+  }>;
   subscribe(subdomain: string, input: SubscribeInput, correlationId: string): Promise<void>;
   confirm(token: string, correlationId: string): Promise<void>;
   unsubscribe(token: string): Promise<void>;
@@ -21,6 +31,23 @@ export function createSubscriptionService({
   tokenSecret: string;
 }): SubscriptionService {
   return {
+    async listReaders(publicationId, ownerId, cursor, limit) {
+      await publicationService.getOwned(publicationId, ownerId);
+      const rows = await repository.listActive(publicationId, cursor, limit + 1);
+      const hasMore = rows.length > limit;
+      const page = rows.slice(0, limit);
+      return {
+        items: page.map((row) => ({
+          id: row.id,
+          email: row.email,
+          slot: row.slot,
+          timezone: row.timezone,
+          joinedAt: row.created_at.toISOString(),
+        })),
+        nextCursor: hasMore ? (page.at(-1)?.id ?? null) : null,
+        hasMore,
+      };
+    },
     async subscribe(subdomain, input, correlationId) {
       const publication = await publicationService.getBySubdomain(subdomain);
       await repository.request(

@@ -26,7 +26,7 @@ const queues = createSqsQueues({
 });
 const limiter = createRateLimiter(process.env.REDIS_URL ?? 'redis://localhost:6379');
 let container: AppContainer;
-const emails: { to: string; subject: string; html: string }[] = [];
+const emails: { to: string; subject: string; html: string; headers: Record<string, string> }[] = [];
 let retryAttempts = 0;
 
 beforeAll(async () => {
@@ -61,13 +61,18 @@ describe('Phase 2 pipeline with real Postgres, Redis, and ElasticMQ', () => {
           if (message.subject === 'Retry Post' && retryAttempts++ === 0)
             throw new EmailRejectedError(true);
           if (message.subject === 'Rejected Post') throw new EmailRejectedError(false);
-          emails.push({ to: message.to, subject: message.subject, html: message.html });
+          emails.push({
+            to: message.to,
+            subject: message.subject,
+            html: message.html,
+            headers: message.headers,
+          });
           return `stub-${emails.length}`;
         },
         async close() {},
       },
       tokenSecret: process.env.TOKEN_HMAC_SECRET ?? 'local_development_hmac_secret_32chars_min!',
-      baseUrl: 'http://localhost:4000',
+      baseUrl: 'http://localhost:3000',
       fromAddress: 'newsletter@vichaar.test',
     });
     const signup = await request(app)
@@ -93,7 +98,7 @@ describe('Phase 2 pipeline with real Postgres, Redis, and ElasticMQ', () => {
     expect(await pipeline.relay()).toBe(1);
     expect(await pipeline.fanoutOnce()).toBe(1);
     expect(emails).toHaveLength(1);
-    const token = emails[0]?.html.match(/subscribe-demo\?token=([^"<]+)/)?.[1];
+    const token = emails[0]?.html.match(/\/confirm\?token=([^"<]+)/)?.[1];
     expect(token).toBeDefined();
     expect((await request(app).post('/subscriptions/confirm').send({ token })).status).toBe(204);
     const draft = await request(app)
@@ -112,6 +117,9 @@ describe('Phase 2 pipeline with real Postgres, Redis, and ElasticMQ', () => {
     expect(await pipeline.sendOnce()).toBe(1);
     expect(emails).toHaveLength(2);
     expect(emails[1]?.html).toContain('<p>Hello</p>');
+    expect(emails[1]?.html).toContain('http://localhost:3000/p/pipeline-');
+    expect(emails[1]?.html).toContain('http://localhost:3000/preferences/');
+    expect(emails[1]?.headers['List-Unsubscribe']).toContain('/one-click>');
     const keys = await container.db!.primaryPool.query<{
       status: string;
       subscription_id: string;

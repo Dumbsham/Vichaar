@@ -2,6 +2,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getPublicPost, getPublicPublication, PublicApiError } from '@/lib/api/public';
+import { getPrivatePost } from '@/lib/api/private';
+import { CheckoutButton } from '@/components/checkout-button';
+import { SubscribeForm } from '@/components/subscribe-form';
 import { formatDate, languageLabel } from '@/lib/format';
 
 type Props = { params: Promise<{ subdomain: string; slug: string }> };
@@ -29,6 +32,8 @@ export default async function PostPage({ params }: Props) {
     if (error instanceof PublicApiError && error.status === 404) notFound();
     throw error;
   }
+  const full = post.isPaid ? await getPrivatePost(subdomain, slug) : undefined;
+  if (full?.state === 'missing') notFound();
   return (
     <article className="article-page" lang={post.language}>
       <Link className="back-link" href={`/p/${subdomain}`}>
@@ -46,16 +51,43 @@ export default async function PostPage({ params }: Props) {
         <h1>{post.title}</h1>
         <p>By {publication.name}</p>
       </div>
-      {post.isPaid ? (
+      {post.isPaid && full?.state === 'full' ? (
+        <div className="article-body" dangerouslySetInnerHTML={{ __html: full.html }} />
+      ) : post.isPaid ? (
         <>
           <div className="article-body paid-preview">{post.htmlPreview}</div>
           <aside className="access-note">
             <span className="access-rule" aria-hidden="true" />
             <p className="eyebrow">For subscribers</p>
             <h2>Continue reading with {publication.name}</h2>
-            <p>
-              This letter is for paid subscribers. Reading the rest will be available here soon.
-            </p>
+            {full?.state === 'login' ? (
+              <>
+                <p>Log in to check your paid access. You can subscribe by email below.</p>
+                <Link
+                  className="solid-button"
+                  href={`/login?next=${encodeURIComponent(`/p/${subdomain}/${slug}`)}`}
+                >
+                  Log in to read
+                </Link>
+              </>
+            ) : full?.state === 'unavailable' ? (
+              <p role="status">
+                Paid access is temporarily unavailable. Please try this page again soon. If you are
+                testing locally, configure Razorpay test keys to enable checkout.
+              </p>
+            ) : (
+              <>
+                <p>
+                  This letter is for paid subscribers. First confirm your email subscription, then
+                  continue to test-mode payment.
+                </p>
+                <CheckoutButton
+                  subdomain={subdomain}
+                  publicationName={publication.name}
+                  publicationId={publication.id}
+                />
+              </>
+            )}
           </aside>
         </>
       ) : (
@@ -67,6 +99,11 @@ export default async function PostPage({ params }: Props) {
       <Link className="back-link bottom-back" href={`/p/${subdomain}`}>
         ← Back to all letters
       </Link>
+      {post.isPaid && (
+        <div className="article-subscribe">
+          <SubscribeForm subdomain={subdomain} />
+        </div>
+      )}
     </article>
   );
 }

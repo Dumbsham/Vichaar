@@ -6,7 +6,11 @@ export function SiteHeader() {
       <Link className="brand" href="/" aria-label="Vichaar home">
         Vichaar<span lang="hi">विचार</span>
       </Link>
-      <span className="site-kicker">Independent letters, thoughtfully sent.</span>
+      <nav className="site-nav" aria-label="Main navigation">
+        <span className="site-kicker">Independent letters, thoughtfully sent.</span>
+        <Link href="/studio">Writing desk</Link>
+        <Link href="/account/subscriptions">Your account</Link>
+      </nav>
     </header>
   );
 }
