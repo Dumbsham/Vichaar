@@ -48,7 +48,7 @@ pnpm db:migrate
 pnpm dev
 ```
 
-The web app listens on `http://localhost:3000`, and the API on `http://localhost:4000`. Open `/design-proof` to inspect the layout without data, or `/p/<subdomain>` after creating a publication and publishing a post through the API. `pnpm dev` also starts eight worker roles. Check API `GET /healthz` and `/readyz` for health. `pnpm db:seed` does not create sample writers or posts. The web server uses `API_ORIGIN` (default `http://127.0.0.1:4000`) for reads and its same-origin `/api/*` rewrite. Keep `CORS_ORIGIN` set to the browser's web origin for mutating requests.
+The web app listens on `http://localhost:3000`, and the API on `http://localhost:4000`. Open `/design-proof` to inspect the layout without data, or `/p/<subdomain>` after creating a publication and publishing a post through the API. `pnpm dev` creates the four local ElasticMQ queues before starting eight worker roles. Check API `GET /healthz` and `/readyz` for health. `pnpm db:seed` does not create sample writers or posts. The web server uses `API_ORIGIN` (default `http://127.0.0.1:4000`) for reads and its same-origin `/api/*` rewrite. Keep `CORS_ORIGIN` set to the browser's web origin for mutating requests.
 
 The workers need local SQS credentials exported, such as `AWS_ACCESS_KEY_ID=test` and `AWS_SECRET_ACCESS_KEY=test`. [`.env.example`](.env.example) documents the remaining configuration. Scripts do not automatically load `.env`; export variables or provide them through your process manager. The local defaults target Compose. `TRUST_PROXY` should be set only to a known reverse proxy address or CIDR when deploying behind one.
 

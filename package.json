@@ -9,7 +9,7 @@
     "stack:down": "docker compose -f infra/compose/docker-compose.yml down",
     "db:migrate": "pnpm --filter @vichaar/db migrate",
     "db:seed": "pnpm --filter @vichaar/db seed",
-    "dev": "turbo dev",
+    "dev": "turbo dev --env-mode=loose",
     "build": "turbo build",
     "test": "vitest run",
     "test:boundary-fixture": "vitest run tests/boundary-rule.test.ts",
