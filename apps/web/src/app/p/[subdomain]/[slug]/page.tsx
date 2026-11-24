@@ -5,6 +5,7 @@ import { getPublicPost, getPublicPublication, PublicApiError } from '@/lib/api/p
 import { getPrivatePost } from '@/lib/api/private';
 import { CheckoutButton } from '@/components/checkout-button';
 import { SubscribeForm } from '@/components/subscribe-form';
+import { QuoteCardControl } from '@/components/quote-card-control';
 import { formatDate, languageLabel } from '@/lib/format';
 
 type Props = { params: Promise<{ subdomain: string; slug: string }> };
@@ -52,10 +53,17 @@ export default async function PostPage({ params }: Props) {
         <p>By {publication.name}</p>
       </div>
       {post.isPaid && full?.state === 'full' ? (
-        <div className="article-body" dangerouslySetInnerHTML={{ __html: full.html }} />
+        <QuoteCardControl subdomain={subdomain} slug={slug}>
+          <div className="article-body" dangerouslySetInnerHTML={{ __html: full.html }} />
+        </QuoteCardControl>
       ) : post.isPaid ? (
         <>
-          <div className="article-body paid-preview">{post.htmlPreview}</div>
+          <QuoteCardControl subdomain={subdomain} slug={slug}>
+            <div
+              className="article-body paid-preview"
+              dangerouslySetInnerHTML={{ __html: post.htmlPreview }}
+            />
+          </QuoteCardControl>
           <aside className="access-note">
             <span className="access-rule" aria-hidden="true" />
             <p className="eyebrow">For subscribers</p>
@@ -91,7 +99,9 @@ export default async function PostPage({ params }: Props) {
           </aside>
         </>
       ) : (
-        <div className="article-body" dangerouslySetInnerHTML={{ __html: post.htmlPreview }} />
+        <QuoteCardControl subdomain={subdomain} slug={slug}>
+          <div className="article-body" dangerouslySetInnerHTML={{ __html: post.htmlPreview }} />
+        </QuoteCardControl>
       )}
       <div className="article-end" aria-hidden="true">
         ✳

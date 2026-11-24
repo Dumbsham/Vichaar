@@ -47,7 +47,7 @@ export function AuthForm({ mode, nextPath }: { mode: 'login' | 'signup'; nextPat
           ? 'Sign in to read paid letters and manage your subscriptions.'
           : 'One account for reading and writing on Vichaar.'}
       </p>
-      <form onSubmit={(event) => void submit(event)}>
+      <form method="post" onSubmit={(event) => void submit(event)}>
         {mode === 'signup' && (
           <label className="form-field">
             <span>Your name</span>

@@ -81,6 +81,10 @@ describe('same-origin API rewrite', () => {
       },
       { timeout: 60000, interval: 300 },
     );
+    for (const path of ['/signup', '/login']) {
+      const html = await (await fetch(`${webOrigin}${path}`)).text();
+      expect(html).toMatch(/<form[^>]*method="post"/);
+    }
     expect((await fetch(`${webOrigin}/api/metrics`)).status).toBe(404);
     const email = `web-${crypto.randomUUID()}@example.test`;
     const signup = await fetch(`${webOrigin}/api/auth/signup`, {

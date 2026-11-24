@@ -66,6 +66,7 @@ export function StudioFrame({ id, children }: { id: string; children: React.Reac
   const base = `/studio/${publication.id}`;
   const links = [
     { href: base, label: 'Overview' },
+    { href: `${base}/posts`, label: 'Posts' },
     { href: `${base}/readers`, label: 'Readers' },
     { href: `${base}/analytics`, label: 'Analytics' },
     { href: `${base}/settings`, label: 'Settings' },

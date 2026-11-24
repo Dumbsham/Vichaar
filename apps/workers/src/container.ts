@@ -9,6 +9,13 @@ import { createWorkerMetrics } from './metrics.js';
 import { startTracing } from './tracing.js';
 import { createBillingPipeline } from './billing.js';
 import { createAnalyticsPipeline } from './analytics.js';
+import {
+  createCloudflarePurger,
+  createLocalPublicPageStore,
+  createPublicPageFetcher,
+  createPublicPagePipeline,
+  createPublicPageRepository,
+} from './public-pages.js';
 
 export interface WorkerConfig {
   production: boolean;
@@ -24,7 +31,16 @@ export interface WorkerConfig {
   smtpHost: string;
   smtpPort: number;
   verifiedAddresses: string[];
-  role: 'relay' | 'fanout' | 'scheduler' | 'sender' | 'sweeper' | 'webhooks' | 'reconciliation' | 'analytics';
+  role:
+    | 'relay'
+    | 'fanout'
+    | 'scheduler'
+    | 'sender'
+    | 'sweeper'
+    | 'webhooks'
+    | 'reconciliation'
+    | 'analytics'
+    | 'pages';
   clickhouseUrl: string;
   clickhouseDb: string;
   clickhouseUser?: string;
@@ -36,6 +52,10 @@ export interface WorkerConfig {
   metricsBasePort: number;
   otlpEndpoint?: string;
   quoteCardDir: string;
+  publicHtmlDir: string;
+  webOrigin: string;
+  cloudflareZoneId?: string;
+  cloudflareApiToken?: string;
 }
 
 export function createWorkerContainer(config: WorkerConfig) {
@@ -49,13 +69,27 @@ export function createWorkerContainer(config: WorkerConfig) {
   ) {
     throw new Error('Production queue and public URLs must be configured securely');
   }
+  if (
+    config.production &&
+    config.role === 'pages' &&
+    (!config.cloudflareZoneId || !config.cloudflareApiToken)
+  )
+    throw new Error('Production public pages require CDN purge credentials');
   const tracing = startTracing(config.otlpEndpoint);
   const metrics = createWorkerMetrics(
     config.role,
     config.metricsBasePort +
-      ['relay', 'fanout', 'scheduler', 'sender', 'sweeper', 'webhooks', 'reconciliation', 'analytics'].indexOf(
-        config.role,
-      ),
+      [
+        'relay',
+        'fanout',
+        'scheduler',
+        'sender',
+        'sweeper',
+        'webhooks',
+        'reconciliation',
+        'analytics',
+        'pages',
+      ].indexOf(config.role),
   );
   const database = createDatabaseClients({ primaryUrl: config.databaseUrl, maxConnections: 3 });
   const queues = createSqsQueues({
@@ -76,6 +110,7 @@ export function createWorkerContainer(config: WorkerConfig) {
     repo: createDeliveryRepository(database.primaryPool),
     events: queues.events,
     sends: queues.sends,
+    pages: queues.pages,
     provider,
     rateLimiter,
     tokenSecret: config.tokenSecret,
@@ -93,7 +128,24 @@ export function createWorkerContainer(config: WorkerConfig) {
     keyId: config.razorpayKeyId,
     keySecret: config.razorpayKeySecret,
   });
-  const analytics = createAnalyticsPipeline({ tracks: queues.tracks, clickhouseUrl: config.clickhouseUrl, database: config.clickhouseDb, user: config.clickhouseUser, password: config.clickhousePassword });
+  const analytics = createAnalyticsPipeline({
+    tracks: queues.tracks,
+    clickhouseUrl: config.clickhouseUrl,
+    database: config.clickhouseDb,
+    user: config.clickhouseUser,
+    password: config.clickhousePassword,
+  });
+  const publicPages = createPublicPagePipeline({
+    pages: queues.pages,
+    repository: createPublicPageRepository(database.primaryPool),
+    store: createLocalPublicPageStore(config.publicHtmlDir),
+    fetcher: createPublicPageFetcher(config.webOrigin),
+    purger: createCloudflarePurger({
+      baseUrl: config.publicBaseUrl,
+      zoneId: config.cloudflareZoneId,
+      apiToken: config.cloudflareApiToken,
+    }),
+  });
   return {
     database,
     queues,
@@ -101,6 +153,7 @@ export function createWorkerContainer(config: WorkerConfig) {
     pipeline,
     billing,
     analytics,
+    publicPages,
     async close() {
       await Promise.all([
         database.close(),

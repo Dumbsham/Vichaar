@@ -11,11 +11,15 @@ import { startDockerService } from './docker-service.js';
 const rootUrl = process.env.DATABASE_URL ?? 'postgres://vichaar:vichaar_pass@localhost:5432/vichaar';
 if (!['localhost', '127.0.0.1'].includes(new URL(rootUrl).hostname)) throw new Error('Chaos test requires local PostgreSQL');
 const databaseName = `vichaar_ch_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+const suffix = randomUUID().slice(0, 12);
 const url = new URL(rootUrl);
 url.pathname = `/${databaseName}`;
 const admin = createDatabaseClients({ primaryUrl: rootUrl, maxConnections: 1 });
 const queues = createSqsQueues({
   endpoint: 'http://localhost:9324', baseUrl: 'http://localhost:9324/queue', region: 'us-east-1',
+  eventsName: `ch-events-${suffix}`,
+  sendsName: `ch-sends-${suffix}`,
+  hooksName: `ch-hooks-${suffix}`,
   tracksName: `ch-storm-${randomUUID().slice(0, 12)}`,
 });
 let db: ReturnType<typeof createDatabaseClients> | undefined;

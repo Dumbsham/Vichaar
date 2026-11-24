@@ -10,6 +10,7 @@
     "scheduler": "WORKER_ROLE=scheduler tsx src/index.ts",
     "sender": "WORKER_ROLE=sender tsx src/index.ts",
     "sweeper": "WORKER_ROLE=sweeper tsx src/index.ts",
+    "pages": "WORKER_ROLE=pages tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },

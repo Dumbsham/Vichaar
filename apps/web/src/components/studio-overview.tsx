@@ -89,6 +89,7 @@ export function StudioOverview() {
         )}
       </section>
       <div className="studio-next">
+        <Link href={`/studio/${publication.id}/posts`}>Write a post ↗</Link>
         <Link href={`/studio/${publication.id}/readers`}>See readers ↗</Link>
         <Link href={`/studio/${publication.id}/analytics`}>See email activity ↗</Link>
         <Link href={`/studio/${publication.id}/settings`}>Edit settings ↗</Link>

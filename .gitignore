@@ -4,11 +4,14 @@ dist
 .next
 next-env.d.ts
 .playwright-cli/
+test-results/
+playwright-report/
 *.tsbuildinfo
 .env
 !.env.example
 coverage
 data/quote-cards/
+data/public-html/
 *.log
 .DS_Store
 learning.md

@@ -81,8 +81,28 @@ export const trackEvent = z.object({
   occurredAt: z.string().datetime(),
   correlationId: z.string().max(64),
 });
-export const trackMessage = z.object({ type: z.literal('TrackBatch'), events: z.array(trackEvent).min(1).max(100) });
+export const trackMessage = z.object({
+  type: z.literal('TrackBatch'),
+  events: z.array(trackEvent).min(1).max(100),
+});
+export const pageMessage = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('PostPublished'),
+    eventId: z.number().int(),
+    publicationId: uuid,
+    postId: uuid,
+    correlationId: z.string().max(64),
+  }),
+  z.object({
+    type: z.literal('PostUnpublished'),
+    eventId: z.number().int(),
+    publicationId: uuid,
+    postId: uuid,
+    correlationId: z.string().max(64),
+  }),
+]);
 export type TrackEvent = z.infer<typeof trackEvent>;
+export type PageMessage = z.infer<typeof pageMessage>;
 export type HookMessage = z.infer<typeof hookMessage>;
 export type EventMessage = z.infer<typeof eventMessage>;
 export type SendMessage = z.infer<typeof sendMessage>;
@@ -119,6 +139,7 @@ export function createSqsQueues(config: {
   sendsName?: string;
   hooksName?: string;
   tracksName?: string;
+  pagesName?: string;
 }) {
   const client = new SQSClient({
     region: config.region,
@@ -129,6 +150,7 @@ export function createSqsQueues(config: {
   const sendsName = config.sendsName ?? 'vichaar-sends';
   const hooksName = config.hooksName ?? 'vichaar-hooks';
   const tracksName = config.tracksName ?? 'vichaar-tracks';
+  const pagesName = config.pagesName ?? 'vichaar-pages';
   function makeQueue<T>(name: string, schema: z.ZodType<T>, receiveBatch = 10): Queue<T> {
     const url = `${config.baseUrl.replace(/\/$/, '')}/${name}`;
     return {
@@ -183,20 +205,35 @@ export function createSqsQueues(config: {
   const localOnly = () => {
     if (!config.endpoint || !/^http:\/\/(localhost|127\.0\.0\.1):9324$/.test(config.endpoint))
       throw new Error('Local queue lifecycle requires local ElasticMQ');
+    if (!config.eventsName || !config.sendsName || !config.hooksName)
+      throw new Error('Local queue lifecycle requires explicit event, send, and hook names');
   };
   return {
     events: makeQueue(eventsName, eventMessage),
     sends: makeQueue(sendsName, sendMessage, 1),
     hooks: makeQueue(hooksName, hookMessage, 1),
     tracks: makeQueue(tracksName, trackMessage, 10),
+    pages: makeQueue(pagesName, pageMessage, 1),
     async createLocalQueues() {
       localOnly();
-      for (const name of [eventsName, sendsName, hooksName, ...(config.tracksName ? [tracksName] : [])])
+      for (const name of [
+        eventsName,
+        sendsName,
+        hooksName,
+        ...(config.tracksName ? [tracksName] : []),
+        ...(config.pagesName ? [pagesName] : []),
+      ])
         await client.send(new CreateQueueCommand({ QueueName: name }));
     },
     async deleteLocalQueues() {
       localOnly();
-      for (const name of [eventsName, sendsName, hooksName, ...(config.tracksName ? [tracksName] : [])])
+      for (const name of [
+        eventsName,
+        sendsName,
+        hooksName,
+        ...(config.tracksName ? [tracksName] : []),
+        ...(config.pagesName ? [pagesName] : []),
+      ])
         await client.send(
           new DeleteQueueCommand({ QueueUrl: `${config.baseUrl.replace(/\/$/, '')}/${name}` }),
         );

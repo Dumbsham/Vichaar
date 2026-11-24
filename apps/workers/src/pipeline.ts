@@ -1,5 +1,5 @@
 import { confirmationToken, unsubscribeToken } from '@vichaar/shared/subscription-tokens';
-import type { Queue, EventMessage, SendMessage, DeliveryKey } from '@vichaar/queue';
+import type { Queue, EventMessage, SendMessage, DeliveryKey, PageMessage } from '@vichaar/queue';
 import type { RateLimiter } from '@vichaar/api/rate-limiter';
 import type { DeliveryRepository, SendResult } from './delivery-repository.js';
 import { EmailRejectedError, type EmailProvider } from './provider.js';
@@ -13,6 +13,7 @@ export interface PipelineDeps {
   repo: DeliveryRepository;
   events: Queue<EventMessage>;
   sends: Queue<SendMessage>;
+  pages?: Queue<PageMessage>;
   provider: EmailProvider;
   rateLimiter: RateLimiter;
   tokenSecret: string;
@@ -36,7 +37,18 @@ export function createPipeline(deps: PipelineDeps) {
   const { repo, events, sends, provider, rateLimiter } = deps;
   const base = deps.baseUrl.replace(/\/$/, '');
   return {
-    relay: () => repo.relay((event) => events.send(event)),
+    relay: () =>
+      repo.relay(async (event) => {
+        await events.send(event);
+        if (deps.pages && (event.type === 'PostPublished' || event.type === 'PostUnpublished'))
+          await deps.pages.send({
+            type: event.type,
+            eventId: event.eventId,
+            publicationId: event.publicationId,
+            postId: event.postId,
+            correlationId: event.correlationId,
+          });
+      }),
     async fanoutOnce(): Promise<number> {
       const messages = await events.receive();
       for (const message of messages) {

@@ -1,10 +1,10 @@
 # Vichaar frontend: phased implementation plan
 
-Status: F0–F3 implemented locally · 2026-11-23
+Status: F0–F4 implemented locally; F5 in progress · 2026-11-25
 
 This is the **web app track of Phase 8**. Build a small, complete Next.js frontend for reading, subscribing, paying in Razorpay test mode, and writing. Each phase should leave a usable slice of the product and pass its own checks before the next one begins. The original [MasterPlan](MasterPlan.md) also includes a deployment blueprint, backups, and infrastructure work in Phase 8; those are separate from this frontend plan.
 
-`apps/web` now contains the F0–F3 reading, subscription, and writer workspace. The Express API remains the authority for authentication, tenant access, consent, payment state, HTML sanitization, and delivery. The remaining screens and API gaps are listed below.
+`apps/web` now contains the F0–F4 reading, subscription, writer workspace, and post editor. The Express API remains the authority for authentication, tenant access, consent, payment state, HTML sanitization, and delivery. The remaining screens and API gaps are listed below.
 
 ## The product we are making
 
@@ -134,6 +134,8 @@ The missing reads are support for existing product requirements, not a new featu
 
 ### F4 — Writing and publishing
 
+**Status:** Implemented locally. Writers can create and page through drafts, write with a route-loaded Tiptap editor, save versioned changes, set a future publish time in a named timezone, publish, and unpublish. Autosaves run serially; a version conflict blocks further saves and keeps the local text available to copy. The API sanitizes HTML and owns publish events. The local scheduling conversion has tests for IST, timezone changes, and a nonexistent daylight-saving time. A live browser check created and saved a draft, published it, opened its public page, recovered from a two-tab version conflict, and scheduled a second draft for 5 December 2026 at 10:00 IST. A Hindi-titled draft saved Tamil body text after an offline save failure and successful retry. At 360 px, the post list and editor had no horizontal overflow; the additional Posts tab prompted a mobile navigation wrap. [Mobile editor](../output/playwright/f4-editor-mobile.png) · [Desktop editor](../output/playwright/f4-editor-desktop.png). The full suite passed with 61 tests and 2 skips, and the production web build passed on Node 22.
+
 **Build:** Add draft create/list/edit, a focused Tiptap editor, language and free/paid settings, versioned autosave, a visible save state, scheduled publish settings, publish confirmation, and unpublish. Keep the toolbar small: headings, bold, italic, quote, list, and link. The backend remains responsible for sanitization. Convert scheduled local time to a UTC ISO timestamp, and show the chosen timezone beside the control.
 
 **Review:** Test Hindi and Tamil input methods, pasted HTML, long drafts, slow requests, offline-to-online recovery, a 409 version conflict from two tabs, and repeated publish clicks. A conflict offers a safe reload/copy path; it never silently overwrites another edit. Publishing does not promise email delivery has finished.
@@ -141,6 +143,8 @@ The missing reads are support for existing product requirements, not a new featu
 **Exit:** A writer can draft, save, schedule or publish, and see the result on the public page. Playwright covers publish and the public read. No duplicate publish event or email is caused by a repeat click.
 
 ### F5 — Quote cards, finish, and release check
+
+**Status:** The reader can select post text or paste a passage into an accessible field, request an API-validated quote card, preview the PNG, and download it. The control is shown only beside text the reader can see; the API still enforces the paid-preview and 200-character limits. The paid preview now renders its sanitized HTML instead of printing markup. A browser check generated a real PNG from a published post, confirmed the download link, and showed the API rejection for text outside the post. The quote control had no horizontal overflow at 320 px; the paid preview had none at 768 and 1440 px. [Mobile quote card](../output/playwright/f5-quote-card-mobile.png). The Playwright flow covers signup, confirmation, publish, receive/read, unsubscribe, anonymous paywall, and local HTML artifact creation/removal; it passed against Mailpit. A paid artifact contained its public opening and excluded its private ending. A local Chrome sample measured LCP and CLS on live routes, while INP had no qualifying interaction entry; see [benchmarks](benchmarks.md). PagesQ and its worker now produce anonymous HTML on publish and purge only the publication/post URLs when Cloudflare credentials are configured; see [ADR-015](adr/015_PublicHtmlArtifacts.md). The local artifacts are not yet the live origin. CDN routing/purge verification and field INP are required before F5 can be marked release-ready.
 
 **Build:** Add text-selection-to-quote-card flow on readable post text, a preview/download action for the returned PNG, polished empty/error states, responsive fixes, and final email-link navigation. Finish the static public HTML/CDN contract decided in F1 before calling the public site release-ready. Keep the same visual language across reader and writer routes.
 

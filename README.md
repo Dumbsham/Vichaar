@@ -17,7 +17,7 @@
 
 </div>
 
-> **Current status:** Phases 1–7 and frontend F0–F3 are implemented locally. Next.js has public reading, subscription, account, and writer workspace pages. Writing/editor and quote-card screens remain in F4/F5. The planned 2 vCPU demo capacity and production email throughput remain unverified. Razorpay requests need your own test keys; automated tests use a stub provider. Deployment containers remain a later phase.
+> **Current status:** Phases 1–7 and frontend F0–F4 are implemented locally. Next.js has public reading, subscription, account, writer workspace, editor, and quote-card controls. F5 now generates anonymous public HTML artifacts after publish and removes them after unpublish; CDN serving/purge and field INP remain deployment checks. The planned 2 vCPU demo capacity and production email throughput remain unverified. Razorpay requests need your own test keys; automated tests use a stub provider. Deployment containers remain a later phase.
 
 ## What works today
 
@@ -50,13 +50,15 @@ pnpm db:migrate
 pnpm dev
 ```
 
-The web app listens on `http://localhost:3000`, and the API on `http://localhost:4000`. Open `/design-proof` to inspect the layout without data, or `/p/<subdomain>` after creating a publication and publishing a post through the API. `pnpm dev` creates the four local ElasticMQ queues before starting eight worker roles. Check API `GET /healthz` and `/readyz` for health. `pnpm db:seed` does not create sample writers or posts. The web server uses `API_ORIGIN` (default `http://127.0.0.1:4000`) for reads and its same-origin `/api/*` rewrite. Keep `CORS_ORIGIN` set to the browser's web origin for mutating requests.
+The web app listens on `http://localhost:3000`, and the API on `http://localhost:4000`. Open `/design-proof` to inspect the layout without data, or `/p/<subdomain>` after creating a publication and publishing a post through the API. `pnpm dev` creates five local ElasticMQ queues before starting nine worker roles. Check API `GET /healthz` and `/readyz` for health. `pnpm db:seed` does not create sample writers or posts. The web server uses `API_ORIGIN` (default `http://127.0.0.1:4000`) for reads and its same-origin `/api/*` rewrite. Keep `CORS_ORIGIN` set to the browser's web origin for mutating requests.
 
 The workers need local SQS credentials exported, such as `AWS_ACCESS_KEY_ID=test` and `AWS_SECRET_ACCESS_KEY=test`. [`.env.example`](.env.example) documents the remaining configuration. Scripts do not automatically load `.env`; export variables or provide them through your process manager. The local defaults target Compose. `TRUST_PROXY` should be set only to a known reverse proxy address or CIDR when deploying behind one.
 
 Phase 5 starts a separate tracking listener at `http://localhost:4001` and an analytics worker. Set the same `TRACKING_HMAC_SECRET` (at least 32 characters) for both processes. The local Compose ClickHouse user and password are in `.env.example`; existing ClickHouse containers created with different credentials need matching `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`. Writer statistics are at `GET /publications/:pubId/stats`. Tracking metrics are at port 4001 `/metrics`, and analytics worker metrics use port 9107.
 
-For Phase 6, `POST /public/:subdomain/posts/:slug/quote-cards` accepts `{ "quote": "text from the post" }` and returns a PNG URL. `GET /publications/:pubId/milestones` requires the owner's session. `QUOTE_CARD_DIR` defaults to `./data/quote-cards` relative to the repository root; the API and fanout worker use the same directory. No new API key is needed. The worker's email provider must already be configured to notify writers. The quote-card web UI is planned for F5.
+For Phase 6, `POST /public/:subdomain/posts/:slug/quote-cards` accepts `{ "quote": "text from the post" }` and returns a PNG URL. `GET /publications/:pubId/milestones` requires the owner's session. `QUOTE_CARD_DIR` defaults to `./data/quote-cards` relative to the repository root; the API and fanout worker use the same directory. No new API key is needed. The worker's email provider must already be configured to notify writers. Readers can select or enter a passage on the post page to preview and download its quote card.
+
+The pages worker writes anonymous publication and post HTML under `PUBLIC_HTML_DIR` (default `./data/public-html`, relative to the repository root). Its local artifacts are verified by the browser suite but are not served at `localhost:3000`; Next.js still serves the live pages dynamically. Deployment must route anonymous requests to those files, route session-bearing requests to Next.js for paid reading, and configure `CLOUDFLARE_ZONE_ID` and `CLOUDFLARE_API_TOKEN` for narrow purge. See [ADR-015](docs/adr/015_PublicHtmlArtifacts.md).
 
 ### Razorpay test-mode setup
 
@@ -111,6 +113,8 @@ REDIS_TEST_URL=redis://localhost:6379 pnpm test
 
 `pnpm lint` runs ESLint and TypeScript checks. `pnpm test` runs Vitest, including API, delivery, and chaos tests against real PostgreSQL, Redis, ElasticMQ and isolated Redis/ClickHouse containers with stub providers. The chaos tests need local Docker access. Setting `REDIS_TEST_URL` also runs the shared Redis rate-limit test. Run `pnpm db:migrate` first. `pnpm loadtest` runs the 500,000-recipient stub delivery and 1,000-recipient slot timing benchmarks against temporary local databases; allow several minutes. Test counts can change as the project grows.
 
+With the web, API, workers, and Mailpit running, `pnpm test:e2e` runs the Chrome browser flow for subscribe, confirm, publish, receive/read, unsubscribe, and the anonymous paid preview. Install the Playwright Chromium browser with `pnpm exec playwright install chromium` first, or set `PLAYWRIGHT_CHANNEL=chrome` to use an installed Chrome. The test creates only local example addresses and Mailpit messages. Tests use isolated ElasticMQ queue names so the development queues stay available.
+
 ## Design direction
 
 Vichaar is a modular monolith with separate delivery workers. PostgreSQL holds durable state; Redis is for rate limits and public preview caching. Domain changes are recorded in a transactional outbox and relayed through an SQS-compatible queue. The implemented delivery flow is outbox relay → subscriber fan-out → slot scheduler → sender, with an atomic delivery claim before an email is sent. Ambiguous send outcomes are flagged rather than automatically retried. Open and click events are batched into ClickHouse without per-event PostgreSQL writes.
@@ -149,7 +153,9 @@ docs/              Design, flows, threat model, failure analysis, ADRs
   - [x] Frontend F1: publication and post reading with public paginated API reads
   - [x] Frontend F2: reader account, subscription, and paid reading
   - [x] Frontend F3: writer overview, readers, analytics, and settings
-  - [ ] Frontend F4–F5 and separate deployment blueprint
+  - [x] Frontend F4: draft editor, scheduling, publish, and unpublish
+  - [ ] Frontend F5: UI, browser flow, and local HTML artifacts are implemented; CDN deployment and field INP remain
+  - [ ] Separate deployment blueprint
 
 The detailed sequence and scope are in [docs/MasterPlan.md](docs/MasterPlan.md). Custom domains and CSV subscriber import are outside the v1 scope.
 

@@ -34,3 +34,10 @@ groups:
           severity: warning
         annotations:
           summary: Razorpay webhook processing is failing.
+      - alert: VichaarPublicPagesDelayed
+        expr: vichaar_queue_depth{worker="pages"} > 0 or increase(vichaar_worker_errors_total{worker="pages"}[5m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Public HTML generation or CDN purge is delayed.

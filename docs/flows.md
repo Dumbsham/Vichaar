@@ -190,6 +190,10 @@ Two simultaneous identical requests both render and one insert wins, which is ha
 
 ---
 
+## 4.1 Public HTML artifact flow (frontend F5)
+
+`PostPublished` and `PostUnpublished` outbox rows are relayed to EventQ for delivery and PagesQ for HTML generation before the outbox row is marked published. The page worker looks up the current post by both `publicationId` and `postId`, fetches the anonymous Next.js publication and post pages without cookies, atomically writes the two HTML files under `PUBLIC_HTML_DIR`, or removes the post file if it is no longer published. It then purges only `/p/:subdomain` and `/p/:subdomain/:slug` through Cloudflare when purge credentials are configured. A failed render or purge leaves the PagesQ message to retry and eventually reach its DLQ. Replays overwrite the same files; a stale publish message cannot restore an unpublished post. Paid full HTML is never fetched for this artifact. The local demo verifies files but does not yet route public traffic through them; session-bearing paid readers must bypass the static/CDN path in deployment (ADR-015).
+
 ## 5. Subscribe and unsubscribe
 
 **Subscribe:** `POST /public/:subdomain/subscribe` always returns 202. In one transaction insert or find the `pending` row (unique on publication and email). Send a confirmation email only if the per-address limit allows. The confirm link carries a one-time token; its hash is stored.

@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { z } from 'zod';
 import { verifyPostDeliveriesPartitions } from '@vichaar/db';
 import { logger } from '@vichaar/api/logger';
@@ -43,6 +45,7 @@ const config = z
       'webhooks',
       'reconciliation',
       'analytics',
+      'pages',
     ]),
     OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess(
       (value) => (value === '' ? undefined : value),
@@ -50,6 +53,10 @@ const config = z
     ),
     METRICS_BASE_PORT: z.coerce.number().int().positive().default(9100),
     QUOTE_CARD_DIR: z.string().min(1).default('./data/quote-cards'),
+    PUBLIC_HTML_DIR: z.string().min(1).default('./data/public-html'),
+    WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
+    CLOUDFLARE_ZONE_ID: z.string().optional(),
+    CLOUDFLARE_API_TOKEN: z.string().optional(),
   })
   .parse(process.env);
 if (
@@ -91,9 +98,13 @@ const worker = createWorkerContainer({
   razorpayKeySecret: config.RAZORPAY_KEY_SECRET,
   metricsBasePort: config.METRICS_BASE_PORT,
   otlpEndpoint: config.OTEL_EXPORTER_OTLP_ENDPOINT,
-  quoteCardDir: config.QUOTE_CARD_DIR,
+  quoteCardDir: resolve(fileURLToPath(new URL('../../../', import.meta.url)), config.QUOTE_CARD_DIR),
+  publicHtmlDir: resolve(fileURLToPath(new URL('../../../', import.meta.url)), config.PUBLIC_HTML_DIR),
+  webOrigin: config.WEB_ORIGIN,
+  cloudflareZoneId: config.CLOUDFLARE_ZONE_ID,
+  cloudflareApiToken: config.CLOUDFLARE_API_TOKEN,
 });
-const { database, queues, metrics, pipeline, billing, analytics } = worker;
+const { database, queues, metrics, pipeline, billing, analytics, publicPages } = worker;
 const roles = {
   relay: { interval: 1000, run: pipeline.relay }, // post publish hogya,queue mein daalta
   fanout: { interval: 1000, run: pipeline.fanoutOnce },
@@ -103,6 +114,7 @@ const roles = {
   webhooks: { interval: 1000, run: billing.processOnce },
   reconciliation: { interval: 3_600_000, run: billing.reconcile },
   analytics: { interval: 1000, run: analytics.consumeOnce },
+  pages: { interval: 1000, run: publicPages.consumeOnce },
 };
 const role = roles[config.WORKER_ROLE];
 let running = true;
@@ -124,15 +136,17 @@ async function main() {
     try {
       const result = await role.run();
       const queueDepth =
-        config.WORKER_ROLE === 'relay' || config.WORKER_ROLE === 'fanout'
-          ? await queues.events.depth()
-          : config.WORKER_ROLE === 'webhooks'
-            ? await queues.hooks.depth()
-            : config.WORKER_ROLE === 'reconciliation'
-              ? 0
-              : config.WORKER_ROLE === 'analytics'
-                ? await queues.tracks.depth()
-                : await queues.sends.depth();
+        config.WORKER_ROLE === 'pages'
+          ? await queues.pages.depth()
+          : config.WORKER_ROLE === 'relay' || config.WORKER_ROLE === 'fanout'
+            ? await queues.events.depth()
+            : config.WORKER_ROLE === 'webhooks'
+              ? await queues.hooks.depth()
+              : config.WORKER_ROLE === 'reconciliation'
+                ? 0
+                : config.WORKER_ROLE === 'analytics'
+                  ? await queues.tracks.depth()
+                  : await queues.sends.depth();
       metrics.setQueueDepth(queueDepth);
       metrics.increment('worker_runs_total');
       metrics.increment('worker_duration_ms_total', Date.now() - started);

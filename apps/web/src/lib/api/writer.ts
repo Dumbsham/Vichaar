@@ -50,14 +50,32 @@ const stats = z.object({
   ),
 });
 const posts = z.object({
-  items: z.array(z.object({ id: z.string().uuid(), title: z.string() }).passthrough()),
-  nextCursor: z.string().nullable().optional(),
-  hasMore: z.boolean().optional(),
+  items: z.array(
+    z.object({
+      id: z.string().uuid(),
+      publicationId: z.string().uuid(),
+      slug: z.string(),
+      title: z.string(),
+      status: z.enum(['draft', 'scheduled', 'published', 'unpublished']),
+      version: z.number().int(),
+      isPaid: z.boolean(),
+      scheduledFor: z.string().nullable(),
+      publishedAt: z.string().nullable(),
+      createdAt: z.string(),
+      updatedAt: z.string(),
+    }),
+  ),
+  nextCursor: z.string().uuid().nullable(),
+  hasMore: z.boolean(),
 });
+const post = posts.shape.items.element;
+const postDetail = post.extend({ body: z.string(), language: z.string() });
 
 export type Publication = z.infer<typeof publication>;
 export type Reader = z.infer<typeof reader>;
 export type AnalyticsStat = z.infer<typeof stats>['data'][number];
+export type WriterPost = z.infer<typeof post>;
+export type WriterPostDetail = z.infer<typeof postDetail>;
 
 export const writerApi = {
   listPublications: (cursor?: string) =>
@@ -90,6 +108,60 @@ export const writerApi = {
   getMilestones: (id: string) =>
     apiRequest(`/publications/${encodeURIComponent(id)}/milestones`, milestones),
   getStats: (id: string) => apiRequest(`/publications/${encodeURIComponent(id)}/stats`, stats),
-  listPosts: (id: string) =>
-    apiRequest(`/publications/${encodeURIComponent(id)}/posts?limit=50`, posts),
+  listPosts: (id: string, cursor?: string) =>
+    apiRequest(
+      `/publications/${encodeURIComponent(id)}/posts?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+      posts,
+    ),
+  getPost: (id: string, postId: string) =>
+    apiRequest(
+      `/publications/${encodeURIComponent(id)}/posts/${encodeURIComponent(postId)}`,
+      postDetail,
+    ),
+  createPost: (
+    id: string,
+    input: { title: string; body: string; language: string; isPaid: boolean },
+  ) =>
+    apiRequest(`/publications/${encodeURIComponent(id)}/posts`, post, {
+      method: 'POST',
+      body: input,
+    }),
+  updatePost: (
+    id: string,
+    postId: string,
+    input: {
+      version: number;
+      title: string;
+      body: string;
+      language: string;
+      isPaid: boolean;
+      scheduledFor: string | null;
+    },
+  ) =>
+    apiRequest(
+      `/publications/${encodeURIComponent(id)}/posts/${encodeURIComponent(postId)}`,
+      post,
+      {
+        method: 'PATCH',
+        body: input,
+      },
+    ),
+  publishPost: (id: string, postId: string, sendImmediately: boolean) =>
+    apiRequest(
+      `/publications/${encodeURIComponent(id)}/posts/${encodeURIComponent(postId)}/publish`,
+      post,
+      {
+        method: 'POST',
+        body: { sendImmediately },
+      },
+    ),
+  unpublishPost: (id: string, postId: string) =>
+    apiRequest(
+      `/publications/${encodeURIComponent(id)}/posts/${encodeURIComponent(postId)}/unpublish`,
+      post,
+      {
+        method: 'POST',
+        body: {},
+      },
+    ),
 };

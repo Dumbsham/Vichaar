@@ -1,5 +1,12 @@
 # Measured benchmarks
 
+## Frontend F5 local browser sample — 2026-11-25
+
+- **Command:** `PLAYWRIGHT_CHANNEL=chrome WEB_VITAL_PATHS=/p/hos,/p/hos/saksham-s-heart pnpm exec tsx scripts/measure-web-vitals.ts` under Node 22.23.2. It loaded the real local publication and article routes in headless Chrome and interacted with the first text field on each route.
+- **Hardware:** Apple M5, 10 logical CPUs, 16 GiB host RAM. Next.js production build, API, PostgreSQL, and Redis ran locally without network throttling. No email provider was used for this browser measurement.
+- **Measured:** Publication LCP 44 ms and CLS 0.0000925; article LCP 36 ms and CLS 0.0000925. The Event Timing observer saw no qualifying interaction entry, so INP was **not measured** (reported as `null`), not zero.
+- **Boundary:** These are two warm local browser samples, not field web vitals or evidence for the planned 2 vCPU deployment. Field INP requires real user interactions after deployment.
+
 ## Phase 7 stub delivery pipeline — 2026-11-21
 
 - **Command:** `pnpm exec tsx loadtests/send-500k.js` under Node 22.23.2. The script created a temporary PostgreSQL database, seeded 500,000 synthetic confirmed subscribers, paged the real delivery repository, ran the real sender pipeline with a stub email provider, checked 500,000 `sent` rows, and dropped the database.

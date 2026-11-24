@@ -14,7 +14,11 @@ await ensureLocalDevQueues({
   endpoint: queueConfig.SQS_ENDPOINT,
   baseUrl: queueConfig.SQS_QUEUE_BASE_URL,
   region: queueConfig.AWS_REGION,
+  eventsName: 'vichaar-events',
+  sendsName: 'vichaar-sends',
+  hooksName: 'vichaar-hooks',
   tracksName: 'vichaar-tracks',
+  pagesName: 'vichaar-pages',
 });
 
 const roles = [
@@ -26,6 +30,7 @@ const roles = [
   'webhooks',
   'reconciliation',
   'analytics',
+  'pages',
 ];
 const children = roles.map((role) =>
   spawn('pnpm', ['exec', 'tsx', 'watch', 'src/index.ts'], {

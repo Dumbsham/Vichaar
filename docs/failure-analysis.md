@@ -22,6 +22,7 @@ Status: draft v1. For each component: what happens when it is **down**, **slow**
 | **ClickHouse** | Redirects and pixels still work. The tracking queue grows. Dashboards show a "data delayed" note. | Batches grow, consumer lag appears | Queue age on tracking queue | Backlog drains after recovery. Retention of the queue bounds how long it can be down. |
 | **Object storage / disk for cards** | Quote cards return 503. Posts and emails are unaffected. | Render timeout | Error rate on card endpoint | Restore storage; cards are regenerated on demand |
 | **Cloudflare** | Site unreachable. Accepted risk for a demo. | - | External uptime monitor | Wait, or point DNS directly at the VM |
+| **Public page worker / CDN purge** | Publish and email delivery continue. PagesQ retries HTML generation or narrow purge; the deployed static origin may show an older page until recovery or cache expiry. | Render and purge calls have short timeouts; page messages move to a DLQ after bounded retries. | PagesQ depth, page-worker error alert, DLQ depth | Restore Next.js or CDN access, then replay the page event. A stale publish event checks current post status before writing. |
 | **The single VM** | Everything is down. This is the main single point of failure. | Disk full, memory pressure | Disk alerts at 80%, container memory alerts, uptime monitor | Rebuild from Compose files and the latest backup. Daily `pg_dump` means up to about 24 hours of data could be lost. State this honestly. |
 
 ## Worker crashes

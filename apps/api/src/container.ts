@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { createDatabaseClients, type DatabaseClients } from '@vichaar/db';
 import { SystemClock } from '@vichaar/shared/clock';
 import { createRateLimiter, type RateLimiter } from './shared/rate-limiter.js';
@@ -144,7 +146,12 @@ export function createContainer(config: ContainerConfig): AppContainer {
   const quoteCardService = createQuoteCardService({
     publicationService,
     repository: createQuoteCardRepository(db.primaryPool),
-    storage: createLocalQuoteCardStorage(process.env.QUOTE_CARD_DIR ?? './data/quote-cards'),
+    storage: createLocalQuoteCardStorage(
+      resolve(
+        fileURLToPath(new URL('../../../', import.meta.url)),
+        process.env.QUOTE_CARD_DIR ?? './data/quote-cards',
+      ),
+    ),
     renderer: createQuoteRenderer(),
     entitlement: billingService,
   });
